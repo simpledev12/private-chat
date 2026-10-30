@@ -1,0 +1,137 @@
+rules_version = '2';
+
+/**
+ * ============================================================================
+ * PRIVATE CHAT — CLOUD FIRESTORE SECURITY RULES (firestore.rules)
+ * ============================================================================
+ * Backend Security Guarantees (Firebase Spark Plan — Zero Cost):
+ * 1. Secret Access Code Verification:
+ *    - The SHA-256 hash of the room's Secret Access Code is stored in
+ *      `/config/access` (`{ secretHash: "<64-char-sha256-hex>" }`).
+ *    - `/config/access` has `allow read: if false;` so NO frontend client or
+ *      attacker can ever read or list the secret hash.
+ *    - When a user signs in, their write to `/authorizedUsers/{uid}` is only
+ *      accepted if `request.resource.data.accessHash` equals
+ *      `get(/databases/$(database)/documents/config/access).data.secretHash`.
+ * 2. Unauthorized Read/Write Prevention:
+ *    - Reading or writing `/messages` or `/presence` requires a verified
+ *      `/authorizedUsers/{uid}` record whose `accessHash` matches the current
+ *      `/config/access.secretHash`.
+ * 3. Message Validation & Anti-Spam Rate Limiting:
+ *    - Enforces display name length (2..30 chars) and message length (1..500 chars).
+ *    - Prevents sender UID spoofing (`senderId == request.auth.uid`) and
+ *      timestamp forgery (`createdAt == request.time`).
+ *    - Enforces a minimum 1-second server-side cooldown between messages via
+ *      atomic `lastMessageAt` timestamp verification.
+ * ============================================================================
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function secretConfigExists() {
+      return exists(/databases/$(database)/documents/config/access);
+    }
+
+    function getSecretHash() {
+      return get(/databases/$(database)/documents/config/access).data.secretHash;
+    }
+
+    function isValidDisplayName(name) {
+      return name is string && name.size() >= 2 && name.size() <= 30;
+    }
+
+    function isValidSha256(hash) {
+      return hash is string && hash.size() == 64 && hash.matches('^[a-f0-9]{64}$');
+    }
+
+    function isAuthorized() {
+      return isSignedIn()
+        && secretConfigExists()
+        && exists(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data.accessHash == getSecretHash();
+    }
+
+    function isNotSpamming() {
+      let userDoc = get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data;
+      let updatedUserDoc = getAfter(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data;
+      return updatedUserDoc.lastMessageAt == request.time
+        && (
+          userDoc.lastMessageAt == null
+          || request.time >= userDoc.lastMessageAt + duration.value(1, 's')
+        );
+    }
+
+    // 1. Backend Secret Config (/config/access) — Unreadable by any client
+    match /config/access {
+      allow read, update, delete: if false;
+
+      allow create: if isSignedIn()
+        && !secretConfigExists()
+        && request.resource.data.keys().hasOnly(['secretHash', 'createdAt'])
+        && isValidSha256(request.resource.data.secretHash)
+        && request.resource.data.createdAt == request.time;
+    }
+
+    // 2. Per-User Session Authorization (/authorizedUsers/{userId})
+    match /authorizedUsers/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && secretConfigExists()
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'accessHash', 'authorizedAt', 'lastMessageAt'])
+        && request.resource.data.uid == request.auth.uid
+        && isValidDisplayName(request.resource.data.displayName)
+        && request.resource.data.accessHash == getSecretHash()
+        && (
+          request.resource.data.lastMessageAt == null
+          || request.resource.data.lastMessageAt == request.time
+        );
+
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 3. Real-Time Chat Messages (/messages/{messageId})
+    match /messages/{messageId} {
+      allow read: if isAuthorized();
+
+      allow create: if isAuthorized()
+        && isNotSpamming()
+        && request.resource.data.keys().hasOnly(['text', 'senderId', 'senderName', 'createdAt'])
+        && request.resource.data.senderId == request.auth.uid
+        && isValidDisplayName(request.resource.data.senderName)
+        && request.resource.data.text is string
+        && request.resource.data.text.size() >= 1
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // 4. Online Users Presence (/presence/{userId})
+    match /presence/{userId} {
+      allow read: if isAuthorized();
+
+      allow create, update: if isAuthorized()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'lastSeen'])
+        && request.resource.data.uid == request.auth.uid
+        && isValidDisplayName(request.resource.data.displayName)
+        && request.resource.data.online is bool
+        && request.resource.data.lastSeen == request.time;
+
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 5. Default Deny All Other Paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
