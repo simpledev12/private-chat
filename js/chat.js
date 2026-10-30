@@ -2,32 +2,22 @@
  * ============================================================================
  * PRIVATE CHAT — REAL-TIME FIRESTORE CHAT, PRESENCE & EMOJIS (js/chat.js)
  * ============================================================================
- * Features:
- * 1. Real-time message synchronization using Firestore `onSnapshot`.
- * 2. Sender display name + formatted timestamps + date dividers.
- * 3. Live online users tracking (`/presence/{uid}`) with heartbeat & cleanup.
- * 4. Categorized touch-friendly Emoji Picker.
- * 5. Message length limit (1–500 chars) + anti-spam cooldown & burst guard.
- * ============================================================================
  */
 
 import {
   collection,
   doc,
-  addDoc,
-  setDoc,
-  deleteDoc,
   query,
   orderBy,
   limitToLast,
   onSnapshot,
+  setDoc,
+  writeBatch,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 export const MAX_MESSAGE_LENGTH = 500;
-const COOLDOWN_MS = 1500;
-const BURST_WINDOW_MS = 10000;
-const MAX_BURST_MESSAGES = 5;
+export const SPAM_COOLDOWN_MS = 1500;
 const PRESENCE_HEARTBEAT_MS = 30000;
 const PRESENCE_STALE_MS = 95000;
 
@@ -35,14 +25,11 @@ export const EMOJI_CATEGORIES = {
   smileys: [
     "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣",
     "😊", "😇", "🙂", "😉", "😌", "😍", "🥰", "😘",
-    "😋", "😛", "😜", "🤪", "🤨", "🧐", "🤓", "😎",
-    "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁",
-    "😮", "😯", "😲", "😳", "🥺", "😢", "😭", "😤"
+    "😋", "😛", "😜", "🤪", "🤨", "🧐", "🤓", "😎"
   ],
   gestures: [
-    "👋", "🤚", "🖐️", "✋", "🖖", "👌", "🤌", "🤏",
-    "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆",
-    "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜",
+    "👋", "🤚", "🖐️", "✋", "👌", "🤌", "🤏", "✌️",
+    "🤞", "🤟", "🤘", "🤙", "👍", "👎", "✊", "👊",
     "👏", "🙌", "👐", "🤲", "🤝", "🙏", "💪", "🫡"
   ],
   hearts: [
@@ -51,14 +38,14 @@ export const EMOJI_CATEGORIES = {
     "💘", "💝", "💟", "♥️", "🫶", "💌", "💐", "🌹"
   ],
   reactions: [
-    "🔥", "✨", "🌟", "💫", "💥", "💯", "✅", "❌",
-    "⚡", "🚀", "🎯", "🏆", "🥇", "💎", "👑", "🎉",
-    "🎊", "🎈", "🙌", "👀", "🤔", "🫡", "🤝", "💤"
+    "🔥", "✨", "🌟", "💫", "⚡", "💥", "💯", "✅",
+    "❌", "⚠️", "🚀", "🎯", "🏆", "🥇", "💡", "🔔",
+    "👀", "🎉", "🎊", "🥳", "🤩", "🤯", "🤔", "😴"
   ],
   objects: [
     "📱", "💻", "⌚", "📷", "🎧", "🎤", "🎬", "🎮",
-    "☕", "🍵", "🍕", "🍔", "🍟", "🌮", "🍰", "🍫",
-    "⚽", "🏀", "🏏", "🏆", "🎸", "✈️", "🏠", "🔒"
+    "☕", "🍕", "🍔", "🍟", "🌮", "🍜", "🍩", "🎂",
+    "⚽", "🏀", "🏏", "🚗", "✈️", "🏠", "🌈", "☀️"
   ]
 };
 
@@ -67,50 +54,43 @@ const SENDER_COLORS = [
   "#53bdeb",
   "#ff7f50",
   "#e879f9",
-  "#f59e0b",
+  "#facc15",
+  "#fb7185",
   "#34d399",
-  "#60a5fa",
-  "#f472b6"
+  "#a78bfa"
 ];
 
 /**
- * Deterministic color picker for sender names in group chat bubbles.
+ * Deterministic color for each sender's name in group chat bubbles.
  */
-export function getSenderColor(senderId = "") {
+function getSenderColor(senderId) {
   let hash = 0;
-  for (let i = 0; i < senderId.length; i++) {
-    hash = senderId.charCodeAt(i) + ((hash << 5) - hash);
+  const str = String(senderId || "");
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const index = Math.abs(hash) % SENDER_COLORS.length;
-  return SENDER_COLORS[index];
+  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
 }
 
 /**
- * Formats a Firestore Timestamp into a short time string (e.g., "6:10 PM").
+ * Formats a Firestore Timestamp or Date into HH:MM AM/PM.
  */
-export function formatMessageTime(timestamp) {
+function formatTime(timestamp) {
   const date = timestamp?.toDate ? timestamp.toDate() : new Date();
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 /**
- * Formats a Firestore Timestamp into a date divider label ("Today", "Yesterday", or "Oct 30, 2026").
+ * Formats a date label for message day dividers (Today, Yesterday, or Date).
  */
-export function formatDateDivider(timestamp) {
+function formatDateHeading(timestamp) {
   const date = timestamp?.toDate ? timestamp.toDate() : new Date();
-  const now = new Date();
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
 
-  const isSameDay = (a, b) =>
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate();
-
-  if (isSameDay(date, now)) return "Today";
-
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (isSameDay(date, yesterday)) return "Yesterday";
-
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
   return date.toLocaleDateString([], {
     month: "short",
     day: "numeric",
@@ -119,35 +99,46 @@ export function formatDateDivider(timestamp) {
 }
 
 /**
- * Controller class managing real-time messages, online presence, and spam protection.
+ * Manages real-time messages, online presence, and spam rate-limiting.
  */
-export class ChatRoomController {
-  constructor({ db, currentUser, onMessagesUpdate, onPresenceUpdate, onAuthRevoked }) {
+export class ChatController {
+  constructor({
+    db,
+    currentUser,
+    messagesListEl,
+    messagesContainerEl,
+    onlineCountEl,
+    onlineUsersListEl,
+    onPermissionRevoked
+  }) {
     this.db = db;
     this.currentUser = currentUser;
-    this.onMessagesUpdate = onMessagesUpdate;
-    this.onPresenceUpdate = onPresenceUpdate;
-    this.onAuthRevoked = onAuthRevoked;
+    this.messagesListEl = messagesListEl;
+    this.messagesContainerEl = messagesContainerEl;
+    this.onlineCountEl = onlineCountEl;
+    this.onlineUsersListEl = onlineUsersListEl;
+    this.onPermissionRevoked = onPermissionRevoked;
 
     this.unsubscribeMessages = null;
     this.unsubscribePresence = null;
     this.heartbeatTimer = null;
-    this.presenceRefreshTimer = null;
-    this.latestPresenceDocs = [];
 
     this.lastSentAt = 0;
     this.lastSentText = "";
-    this.recentSendTimestamps = [];
-
-    this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
-    this.handleBeforeUnload = this.handleBeforeUnload.bind(this);
   }
 
   /**
    * Starts real-time Firestore listeners for messages and online presence.
    */
-  async start() {
-    // 1. Subscribe to `/messages` ordered by creation time
+  start() {
+    this.subscribeToMessages();
+    this.startPresenceTracking();
+  }
+
+  /**
+   * Subscribes to the shared room's messages collection in real time.
+   */
+  subscribeToMessages() {
     const messagesQuery = query(
       collection(this.db, "messages"),
       orderBy("createdAt", "asc"),
@@ -157,159 +148,236 @@ export class ChatRoomController {
     this.unsubscribeMessages = onSnapshot(
       messagesQuery,
       (snapshot) => {
-        const messages = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data()
-        }));
-        this.onMessagesUpdate(messages);
+        this.renderMessages(snapshot.docs);
       },
       (error) => {
-        if (error?.code === "permission-denied" && this.onAuthRevoked) {
-          this.onAuthRevoked("Session expired or Secret Access Code was rotated.");
+        if (error?.code === "permission-denied" && this.onPermissionRevoked) {
+          this.onPermissionRevoked(
+            "Session expired or access code changed. Please sign in again."
+          );
         }
       }
     );
-
-    // 2. Subscribe to `/presence` for online users indicator
-    const presenceRef = collection(this.db, "presence");
-    this.unsubscribePresence = onSnapshot(
-      presenceRef,
-      (snapshot) => {
-        this.latestPresenceDocs = snapshot.docs.map((d) => d.data());
-        this.emitFilteredPresence();
-      },
-      () => {}
-    );
-
-    // 3. Announce presence and start heartbeat
-    await this.updatePresence(true);
-    this.heartbeatTimer = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        this.updatePresence(true);
-      }
-    }, PRESENCE_HEARTBEAT_MS);
-
-    this.presenceRefreshTimer = setInterval(() => {
-      this.emitFilteredPresence();
-    }, 15000);
-
-    document.addEventListener("visibilitychange", this.handleVisibilityChange);
-    window.addEventListener("pagehide", this.handleBeforeUnload);
   }
 
   /**
-   * Filters presence list to active users seen within PRESENCE_STALE_MS.
+   * Renders all messages cleanly using safe DOM textContent (XSS-proof).
    */
-  emitFilteredPresence() {
-    const now = Date.now();
-    const activeUsers = this.latestPresenceDocs.filter((entry) => {
-      if (!entry?.online) return false;
-      if (entry.uid === this.currentUser.uid) return true;
-      const lastSeenMs = entry.lastSeen?.toMillis ? entry.lastSeen.toMillis() : now;
-      return now - lastSeenMs < PRESENCE_STALE_MS;
+  renderMessages(docs) {
+    const container = this.messagesContainerEl;
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 140;
+
+    this.messagesListEl.innerHTML = "";
+    let lastDateLabel = null;
+
+    docs.forEach((docSnap) => {
+      const data = docSnap.data();
+      const dateLabel = formatDateHeading(data.createdAt);
+
+      if (dateLabel !== lastDateLabel) {
+        lastDateLabel = dateLabel;
+        const divider = document.createElement("div");
+        divider.className = "date-divider";
+        divider.textContent = dateLabel;
+        this.messagesListEl.appendChild(divider);
+      }
+
+      const isOutgoing = data.senderId === this.currentUser.uid;
+      const row = document.createElement("div");
+      row.className = `message-row ${isOutgoing ? "outgoing" : "incoming"}`;
+
+      const bubble = document.createElement("div");
+      bubble.className = "message-bubble";
+
+      if (!isOutgoing) {
+        const senderEl = document.createElement("span");
+        senderEl.className = "sender-name";
+        senderEl.style.color = getSenderColor(data.senderId);
+        senderEl.textContent = data.senderName || "Member";
+        bubble.appendChild(senderEl);
+      }
+
+      const textEl = document.createElement("span");
+      textEl.className = "message-text";
+      textEl.textContent = data.text || "";
+      bubble.appendChild(textEl);
+
+      const metaEl = document.createElement("span");
+      metaEl.className = "message-meta";
+
+      const timeEl = document.createElement("span");
+      timeEl.textContent = formatTime(data.createdAt);
+      metaEl.appendChild(timeEl);
+
+      if (isOutgoing) {
+        const checkEl = document.createElement("span");
+        checkEl.className = "check-icon";
+        checkEl.textContent = "✓✓";
+        metaEl.appendChild(checkEl);
+      }
+
+      bubble.appendChild(metaEl);
+      row.appendChild(bubble);
+      this.messagesListEl.appendChild(row);
     });
 
-    // Ensure current user appears in the active list
-    if (!activeUsers.some((u) => u.uid === this.currentUser.uid)) {
-      activeUsers.unshift({
-        uid: this.currentUser.uid,
-        displayName: this.currentUser.displayName,
-        online: true
-      });
+    if (isNearBottom || docs.length <= 20) {
+      container.scrollTop = container.scrollHeight;
     }
-
-    this.onPresenceUpdate(activeUsers);
   }
 
   /**
-   * Updates `/presence/{uid}` in Cloud Firestore.
-   */
-  async updatePresence(isOnline) {
-    if (!this.currentUser?.uid) return;
-    try {
-      const ref = doc(this.db, "presence", this.currentUser.uid);
-      if (isOnline) {
-        await setDoc(ref, {
-          uid: this.currentUser.uid,
-          displayName: this.currentUser.displayName,
-          online: true,
-          lastSeen: serverTimestamp()
-        });
-      } else {
-        await deleteDoc(ref);
-      }
-    } catch (_) {
-      // Ignore transient network errors during background heartbeat
-    }
-  }
-
-  handleVisibilityChange() {
-    if (document.visibilityState === "visible") {
-      this.updatePresence(true);
-    }
-  }
-
-  handleBeforeUnload() {
-    this.updatePresence(false);
-  }
-
-  /**
-   * Validates and sends a chat message with length limits and anti-spam protection.
+   * Validates and sends a chat message with rate limiting and spam protection.
    */
   async sendMessage(rawText) {
-    const cleanText = String(rawText || "").trim();
+    const cleaned = String(rawText || "")
+      .replace(/\r\n/g, "\n")
+      .trim();
 
-    if (!cleanText) {
+    if (!cleaned) {
       throw new Error("Cannot send an empty message.");
     }
 
-    if (cleanText.length > MAX_MESSAGE_LENGTH) {
+    if (cleaned.length > MAX_MESSAGE_LENGTH) {
       throw new Error(`Message exceeds maximum limit of ${MAX_MESSAGE_LENGTH} characters.`);
     }
 
     const now = Date.now();
+    const elapsed = now - this.lastSentAt;
 
-    // 1. Cooldown check (1.5s between messages)
-    if (now - this.lastSentAt < COOLDOWN_MS) {
-      const waitSec = ((COOLDOWN_MS - (now - this.lastSentAt)) / 1000).toFixed(1);
-      throw new Error(`Slow down! Wait ${waitSec}s before sending another message.`);
+    if (elapsed < SPAM_COOLDOWN_MS) {
+      const waitSec = ((SPAM_COOLDOWN_MS - elapsed) / 1000).toFixed(1);
+      throw new Error(`Slow down! Please wait ${waitSec}s before sending another message.`);
     }
 
-    // 2. Burst rate-limit check (max 5 messages per 10 seconds)
-    this.recentSendTimestamps = this.recentSendTimestamps.filter(
-      (ts) => now - ts < BURST_WINDOW_MS
-    );
-    if (this.recentSendTimestamps.length >= MAX_BURST_MESSAGES) {
-      throw new Error("Rate limit reached: Please wait a few seconds before sending more messages.");
-    }
-
-    // 3. Consecutive identical spam check
-    if (cleanText === this.lastSentText && now - this.lastSentAt < 8000) {
-      throw new Error("Duplicate message blocked to prevent spam.");
+    if (cleaned === this.lastSentText && elapsed < 10000) {
+      throw new Error("Duplicate message blocked by spam protection.");
     }
 
     this.lastSentAt = now;
-    this.lastSentText = cleanText;
-    this.recentSendTimestamps.push(now);
+    this.lastSentText = cleaned;
 
-    await addDoc(collection(this.db, "messages"), {
-      text: cleanText,
+    // Atomic batch write: create message + update user's `lastMessageAt` timestamp
+    const batch = writeBatch(this.db);
+    const newMsgRef = doc(collection(this.db, "messages"));
+    const userAuthRef = doc(this.db, "authorizedUsers", this.currentUser.uid);
+
+    batch.set(newMsgRef, {
+      text: cleaned,
       senderId: this.currentUser.uid,
       senderName: this.currentUser.displayName,
       createdAt: serverTimestamp()
     });
+
+    batch.update(userAuthRef, {
+      lastMessageAt: serverTimestamp()
+    });
+
+    await batch.commit();
+
+    // Scroll to bottom after sending
+    this.messagesContainerEl.scrollTop = this.messagesContainerEl.scrollHeight;
   }
 
   /**
-   * Unsubscribes all listeners and cleans up presence timers.
+   * Publishes user presence and subscribes to active online members in real time.
    */
-  async stop() {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    if (this.presenceRefreshTimer) clearInterval(this.presenceRefreshTimer);
-    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
-    window.removeEventListener("pagehide", this.handleBeforeUnload);
+  startPresenceTracking() {
+    const updateMyPresence = async (onlineStatus = true) => {
+      try {
+        await setDoc(doc(this.db, "presence", this.currentUser.uid), {
+          uid: this.currentUser.uid,
+          displayName: this.currentUser.displayName,
+          online: onlineStatus,
+          lastSeen: serverTimestamp()
+        });
+      } catch (_) {
+        // Ignore transient offline errors
+      }
+    };
 
-    if (this.unsubscribeMessages) this.unsubscribeMessages();
-    if (this.unsubscribePresence) this.unsubscribePresence();
+    updateMyPresence(true);
+    this.heartbeatTimer = setInterval(() => updateMyPresence(true), PRESENCE_HEARTBEAT_MS);
+
+    this.visibilityHandler = () => {
+      if (document.visibilityState === "visible") {
+        updateMyPresence(true);
+      }
+    };
+    document.addEventListener("visibilitychange", this.visibilityHandler);
+
+    const presenceQuery = query(collection(this.db, "presence"));
+    this.unsubscribePresence = onSnapshot(
+      presenceQuery,
+      (snapshot) => {
+        const now = Date.now();
+        const activeUsers = [];
+
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (!data?.online) return;
+          const lastSeenMs = data.lastSeen?.toMillis ? data.lastSeen.toMillis() : now;
+          if (now - lastSeenMs <= PRESENCE_STALE_MS) {
+            activeUsers.push(data);
+          }
+        });
+
+        this.renderOnlineUsers(activeUsers);
+      },
+      () => {}
+    );
+  }
+
+  /**
+   * Renders the online user counter and drawer chips.
+   */
+  renderOnlineUsers(users) {
+    const count = Math.max(1, users.length);
+    this.onlineCountEl.textContent = `${count} online`;
+    this.onlineUsersListEl.innerHTML = "";
+
+    const list =
+      users.length > 0
+        ? users
+        : [{ uid: this.currentUser.uid, displayName: this.currentUser.displayName }];
+
+    list.forEach((u) => {
+      const li = document.createElement("li");
+      li.className = "online-user-chip";
+
+      const dot = document.createElement("span");
+      dot.className = "online-dot";
+      li.appendChild(dot);
+
+      const nameSpan = document.createElement("span");
+      const isMe = u.uid === this.currentUser.uid;
+      nameSpan.textContent = isMe ? `${u.displayName} (You)` : u.displayName;
+      li.appendChild(nameSpan);
+
+      this.onlineUsersListEl.appendChild(li);
+    });
+  }
+
+  /**
+   * Stops all listeners and timers when logging out.
+   */
+  stop() {
+    if (this.unsubscribeMessages) {
+      this.unsubscribeMessages();
+      this.unsubscribeMessages = null;
+    }
+    if (this.unsubscribePresence) {
+      this.unsubscribePresence();
+      this.unsubscribePresence = null;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.visibilityHandler) {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
   }
 }
