@@ -1,0 +1,11 @@
+# Never commit private Firebase Admin credentials or local secret files
+.env
+.env.*
+*.pem
+*firebase-adminsdk*.json
+serviceAccountKey.json
+.firebase/
+firebase-debug.log
+firestore-debug.log
+.DS_Store
+node_modules/

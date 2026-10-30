@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b141a" />
+  <title>Private Chat — Secure Real-Time Room</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+
+    <!-- ================================================================== -->
+    <!-- VIEW 1: LOGIN & ACCESS CODE SCREEN                                 -->
+    <!-- ================================================================== -->
+    <section id="login-view" class="view active" aria-label="Login Screen">
+      <div class="auth-card">
+        <div class="auth-top-bar">
+          <span id="connection-pill" class="status-pill disconnected">
+            <span class="status-dot"></span>
+            <span id="connection-pill-text">Firebase Not Configured</span>
+          </span>
+          <div class="auth-top-actions">
+            <button id="open-config-btn" type="button" class="icon-btn" title="Firebase Project Setup" aria-label="Firebase Project Setup">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
+            <button id="theme-toggle-login" type="button" class="icon-btn" title="Toggle Light/Dark Mode" aria-label="Toggle Light/Dark Mode">
+              <svg class="sun-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="auth-brand">
+          <div class="brand-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+              <rect x="9" y="9" width="6" height="5" rx="1"></rect>
+              <path d="M10.5 9V7.5a1.5 1.5 0 0 1 3 0V9"></path>
+            </svg>
+          </div>
+          <h1>Private Chat</h1>
+          <p class="auth-subtitle">End-to-end Firestore rules protected room. Enter your display name and the shared secret access code to join.</p>
+        </div>
+
+        <div id="login-alert" class="alert-banner hidden" role="alert"></div>
+
+        <form id="login-form" autocomplete="off" novalidate>
+          <div class="form-group">
+            <label for="display-name-input">Display Name</label>
+            <div class="input-wrapper">
+              <input
+                id="display-name-input"
+                type="text"
+                minlength="2"
+                maxlength="30"
+                placeholder="e.g. Aarav, Priya..."
+                required
+              />
+            </div>
+            <span class="field-hint">2 to 30 characters • Shown to other members</span>
+          </div>
+
+          <div class="form-group">
+            <label for="access-code-input">Secret Access Code</label>
+            <div class="input-wrapper password-wrapper">
+              <input
+                id="access-code-input"
+                type="password"
+                minlength="4"
+                maxlength="64"
+                placeholder="Enter shared room access code"
+                required
+              />
+              <button id="toggle-code-visibility" type="button" class="text-toggle-btn" aria-label="Show or hide access code">
+                Show
+              </button>
+            </div>
+            <span class="field-hint">Verified via SHA-256 against Cloud Firestore Security Rules</span>
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label class="checkbox-label" for="init-room-checkbox">
+              <input id="init-room-checkbox" type="checkbox" />
+              <span>First-time setup: Initialize room with this Secret Access Code</span>
+            </label>
+          </div>
+
+          <button id="join-btn" type="submit" class="primary-btn">
+            <span id="join-btn-text">Join Private Room</span>
+          </button>
+        </form>
+
+        <div class="security-footer">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span>Zero secret codes in frontend JS • Protected by Firestore Rules</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- VIEW 2: REAL-TIME CHAT SCREEN                                      -->
+    <!-- ================================================================== -->
+    <section id="chat-view" class="view" aria-label="Chat Room">
+      <!-- Chat Header -->
+      <header class="chat-header">
+        <div class="header-left">
+          <div class="room-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+          </div>
+          <div class="room-info">
+            <div class="room-title-row">
+              <h2>Private Chat Room</h2>
+            </div>
+            <button id="online-users-toggle" type="button" class="online-status-btn" aria-expanded="false">
+              <span class="online-dot"></span>
+              <span id="online-count-text">1 online</span>
+              <span class="tap-hint">• Tap to view</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button id="theme-toggle-chat" type="button" class="icon-btn" title="Toggle Light/Dark Mode" aria-label="Toggle Light/Dark Mode">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+          </button>
+          <button id="logout-btn" type="button" class="logout-btn" title="Leave Chat & Logout">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>Logout</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Collapsible Online Users Drawer -->
+      <aside id="online-drawer" class="online-drawer hidden" aria-label="Online Users">
+        <div class="online-drawer-header">
+          <span>Active Members in Room</span>
+          <button id="close-online-drawer" type="button" class="text-btn">Close</button>
+        </div>
+        <ul id="online-users-list" class="online-users-list"></ul>
+      </aside>
+
+      <!-- Real-Time Message Stream -->
+      <main id="messages-container" class="messages-container" aria-live="polite">
+        <div class="encryption-notice">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span>Messages are protected by Cloud Firestore Security Rules. Only verified members with the Secret Access Code can read or send messages.</span>
+        </div>
+        <div id="messages-list" class="messages-list"></div>
+      </main>
+
+      <!-- Emoji Picker Drawer -->
+      <div id="emoji-picker" class="emoji-picker hidden" aria-label="Emoji Picker">
+        <div class="emoji-tabs" role="tablist">
+          <button type="button" class="emoji-tab active" data-category="smileys">😀</button>
+          <button type="button" class="emoji-tab" data-category="gestures">👋</button>
+          <button type="button" class="emoji-tab" data-category="hearts">❤️</button>
+          <button type="button" class="emoji-tab" data-category="reactions">🔥</button>
+          <button type="button" class="emoji-tab" data-category="objects">🎉</button>
+        </div>
+        <div id="emoji-grid" class="emoji-grid"></div>
+      </div>
+
+      <!-- Chat Composer Footer -->
+      <footer class="chat-composer">
+        <div id="composer-toast" class="composer-toast hidden" role="status"></div>
+        <form id="message-form" class="composer-bar" autocomplete="off">
+          <button id="emoji-toggle-btn" type="button" class="emoji-btn" aria-label="Choose Emoji" title="Insert Emoji">
+            😊
+          </button>
+          <div class="composer-input-wrap">
+            <input
+              id="message-input"
+              type="text"
+              maxlength="500"
+              placeholder="Message"
+              aria-label="Type a message"
+            />
+            <span id="char-counter" class="char-counter">0/500</span>
+          </div>
+          <button id="send-btn" type="submit" class="send-btn" aria-label="Send Message" title="Send">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+            </svg>
+          </button>
+        </form>
+      </footer>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- MODAL: FIREBASE PROJECT CONFIGURATION & SHA-256 HELPER             -->
+    <!-- ================================================================== -->
+    <div id="config-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="config-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="config-modal-title">Firebase Project Configuration</h3>
+          <button id="close-config-modal" type="button" class="icon-btn" aria-label="Close modal">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <p class="modal-desc">
+            Paste your <code>firebaseConfig</code> snippet from the Firebase Console (<strong>Project Settings → General → Your apps → Web App</strong>). It will be saved on your device—or edit <code>js/config.js</code> in GitHub to pre-configure it for everyone.
+          </p>
+
+          <div id="config-modal-alert" class="alert-banner hidden"></div>
+
+          <label for="firebase-config-textarea" class="modal-label">Paste <code>firebaseConfig</code> Block</label>
+          <textarea
+            id="firebase-config-textarea"
+            rows="7"
+            placeholder='const firebaseConfig = {
+  apiKey: "AIza...",
+  authDomain: "your-app.firebaseapp.com",
+  projectId: "your-app",
+  storageBucket: "your-app.firebasestorage.app",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef"
+};'
+          ></textarea>
+
+          <div class="modal-actions">
+            <button id="save-config-btn" type="button" class="primary-btn">Save & Connect Firebase</button>
+            <button id="share-config-btn" type="button" class="secondary-btn">Copy Shareable Setup Link</button>
+          </div>
+
+          <div class="hash-helper-box">
+            <h4>Admin Helper: SHA-256 Access Code Hash Generator</h4>
+            <p class="modal-desc">
+              Want to set or rotate the Secret Access Code manually in Firestore Console? Create document <code>/config/access</code> with field <code>secretHash</code> set to the SHA-256 hash below:
+            </p>
+            <div class="hash-input-row">
+              <input id="hash-helper-input" type="text" placeholder="Type desired secret code to hash..." />
+              <button id="copy-hash-btn" type="button" class="secondary-btn">Copy Hash</button>
+            </div>
+            <code id="hash-helper-output" class="hash-output">Enter a code above to generate its 64-char SHA-256 hash</code>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
