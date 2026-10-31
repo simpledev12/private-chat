@@ -4,13 +4,6 @@ rules_version = '2';
  * ============================================================================
  * PRIVATE CHAT — CLOUD FIRESTORE SECURITY RULES (firestore.rules)
  * ============================================================================
- * Supports:
- * 1. Backend Secret Access Code verification (/config/access.secretHash)
- * 2. Real-time text messages (up to 500 chars), compressed photos & voice notes
- * 3. Quoted Replies, Emoji Reactions, Edit Own Message, & Delete Own Message
- * 4. Live Typing Indicator & Online Presence (/presence/{userId})
- * 5. Anti-spam 1-second server-side rate limiting
- * ============================================================================
  */
 
 service cloud.firestore {
@@ -71,10 +64,11 @@ service cloud.firestore {
         );
     }
 
-    // 1. Backend Secret Config (/config/access) — Unreadable by any client
+    // 1. Backend Secret Config (/config/access)
     match /config/access {
       allow read, update, delete: if false;
 
+      // Allow automatic initial creation if /config/access does not exist yet
       allow create: if isSignedIn()
         && !secretConfigExists()
         && request.resource.data.keys().hasOnly(['secretHash', 'createdAt'])
@@ -125,7 +119,6 @@ service cloud.firestore {
         )
         && request.resource.data.createdAt == request.time;
 
-      // Allow authorized members to react OR the original sender to edit their message text
       allow update: if isAuthorized()
         && request.resource.data.senderId == resource.data.senderId
         && request.resource.data.senderName == resource.data.senderName
@@ -146,7 +139,6 @@ service cloud.firestore {
           )
         );
 
-      // Only the original sender of a message can delete it ("Delete for Everyone")
       allow delete: if isAuthorized()
         && resource.data.senderId == request.auth.uid;
     }
@@ -166,7 +158,6 @@ service cloud.firestore {
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
-    // 5. Default Deny All Other Paths
     match /{document=**} {
       allow read, write: if false;
     }

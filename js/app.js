@@ -12,9 +12,7 @@ import { getFirebaseConfig } from "./config.js";
 
 import {
   loginWithAccessCode,
-  checkExistingSession,
-  logoutAndRevoke,
-  onAuthStateChanged
+  logoutAndRevoke
 } from "./auth.js";
 
 import {
@@ -107,9 +105,6 @@ let recordInterval = null;
 let recordSeconds = 0;
 let shouldSendRecording = false;
 
-/**
- * 1. Theme & Sound Management
- */
 function initTheme() {
   const savedTheme = localStorage.getItem("private_chat_theme") || "dark";
   document.documentElement.setAttribute("data-theme", savedTheme);
@@ -133,9 +128,6 @@ soundToggleBtn.addEventListener("click", () => {
   showComposerToast(soundEnabled ? "Notification sound ON 🔔" : "Notification sound MUTED 🔕");
 });
 
-/**
- * 2. Alert & Toast Helpers
- */
 function showLoginAlert(message, isSuccess = false) {
   loginAlert.textContent = message;
   loginAlert.classList.toggle("success", isSuccess);
@@ -155,9 +147,6 @@ function showComposerToast(message) {
   }, 3200);
 }
 
-/**
- * 3. Initialize Firebase Web SDK from Locked Configuration
- */
 function initFirebaseClient() {
   const cfg = getFirebaseConfig();
   try {
@@ -168,16 +157,6 @@ function initFirebaseClient() {
     connectionPill.classList.remove("disconnected");
     connectionPill.classList.add("connected");
     connectionPillText.textContent = "Secure Room Ready";
-
-    onAuthStateChanged(auth, async (user) => {
-      if (user && !activeUser) {
-        const restored = await checkExistingSession(db, user);
-        if (restored) {
-          enterChatRoom(restored);
-        }
-      }
-    });
-
     return true;
   } catch (err) {
     showLoginAlert(`Connection error: ${err.message}`);
@@ -185,9 +164,6 @@ function initFirebaseClient() {
   }
 }
 
-/**
- * 4. Switch Views & Start/Stop Chat Controller
- */
 function enterChatRoom(userProfile) {
   activeUser = userProfile;
   hideLoginAlert();
@@ -209,8 +185,8 @@ function enterChatRoom(userProfile) {
     tapViewHintEl: tapViewHint,
     onlineUsersListEl: onlineUsersList,
     scrollBottomBtnEl: scrollBottomBtn,
-    onPermissionRevoked: async (reason) => {
-      await handleLogout(reason);
+    onPermissionRevoked: async () => {
+      await handleLogout();
     },
     onPhotoClick: (src) => {
       lightboxImg.src = src;
@@ -292,9 +268,6 @@ async function handleLogout(alertReason = "") {
   }
 }
 
-/**
- * 5. Login Form Submission
- */
 loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   hideLoginAlert();
@@ -314,8 +287,7 @@ loginForm.addEventListener("submit", async (e) => {
       auth,
       db,
       displayName,
-      accessCode,
-      initializeRoom: false
+      accessCode
     });
     enterChatRoom(userProfile);
   } catch (err) {
@@ -334,9 +306,6 @@ toggleCodeBtn.addEventListener("click", () => {
 
 logoutBtn.addEventListener("click", () => handleLogout());
 
-/**
- * 6. Online Users Drawer Toggle
- */
 onlineUsersToggle.addEventListener("click", () => {
   const isHidden = onlineDrawer.classList.toggle("hidden");
   onlineUsersToggle.setAttribute("aria-expanded", String(!isHidden));
@@ -347,9 +316,6 @@ closeOnlineDrawer.addEventListener("click", () => {
   onlineUsersToggle.setAttribute("aria-expanded", "false");
 });
 
-/**
- * 7. Emoji Picker Logic
- */
 function renderEmojiCategory(category) {
   emojiGrid.innerHTML = "";
   const emojis = EMOJI_CATEGORIES[category] || EMOJI_CATEGORIES.smileys;
@@ -392,9 +358,6 @@ emojiTabs.forEach((tab) => {
   });
 });
 
-/**
- * 8. Photo Attachment, Compression & Lightbox Viewer
- */
 function clearPendingPhoto() {
   pendingImageData = null;
   photoInput.value = "";
@@ -438,9 +401,6 @@ lightboxModal.addEventListener("click", (e) => {
   }
 });
 
-/**
- * 9. Voice Note Recording (Up to 15 Seconds, Spark Plan Compressed Audio)
- */
 async function startVoiceRecording() {
   if (!navigator.mediaDevices?.getUserMedia) {
     showComposerToast("Microphone is not supported on this browser.");
@@ -531,9 +491,6 @@ voiceBtn.addEventListener("click", () => {
 cancelVoiceBtn.addEventListener("click", () => stopVoiceRecording(false));
 sendVoiceBtn.addEventListener("click", () => stopVoiceRecording(true));
 
-/**
- * 10. Message Composer, Live Typing Indicator & Character Limit
- */
 function updateCharCounter() {
   const len = messageInput.value.length;
   charCounter.textContent = `${len}/${MAX_MESSAGE_LENGTH}`;
@@ -596,7 +553,6 @@ messageForm.addEventListener("submit", async (e) => {
   }
 });
 
-// Bootstrap App on Load
 initTheme();
 renderEmojiCategory("smileys");
 initFirebaseClient();
