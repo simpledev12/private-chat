@@ -7,6 +7,7 @@
 import {
   collection,
   doc,
+  addDoc,
   query,
   orderBy,
   limitToLast,
@@ -14,13 +15,12 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
-  writeBatch,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 export const MAX_MESSAGE_LENGTH = 500;
 export const MAX_MEDIA_DATA_LENGTH = 240000;
-export const SPAM_COOLDOWN_MS = 1500;
+export const SPAM_COOLDOWN_MS = 600;
 const PRESENCE_HEARTBEAT_MS = 30000;
 const PRESENCE_STALE_MS = 95000;
 const TYPING_STALE_MS = 8000;
@@ -95,10 +95,6 @@ function formatDateHeading(timestamp) {
   });
 }
 
-/**
- * Plays a gentle WhatsApp-inspired incoming message pop sound using Web Audio API
- * and vibrates lightly on Android devices.
- */
 export function playIncomingAlert(soundEnabled = true) {
   try {
     if (navigator.vibrate) {
@@ -122,10 +118,6 @@ export function playIncomingAlert(soundEnabled = true) {
   } catch (_) {}
 }
 
-/**
- * Compresses a selected image file on the client using an HTML5 Canvas so it can
- * be stored directly inside Cloud Firestore on the 100% Free Spark Plan.
- */
 export function compressImageFile(file, maxDimension = 720, quality = 0.72) {
   return new Promise((resolve, reject) => {
     if (!file || !file.type.startsWith("image/")) {
@@ -175,9 +167,6 @@ export function compressImageFile(file, maxDimension = 720, quality = 0.72) {
   });
 }
 
-/**
- * Manages real-time messages, replies, reactions, voice notes, edits, deletes, & typing indicators.
- */
 export class ChatController {
   constructor({
     db,
@@ -222,7 +211,6 @@ export class ChatController {
     this.knownMessageIds = new Set();
 
     this.lastSentAt = 0;
-    this.lastSentText = "";
   }
 
   start() {
@@ -308,7 +296,7 @@ export class ChatController {
         bubble.appendChild(senderEl);
       }
 
-      // 1. Render Quoted Reply Box if `data.replyTo` exists
+      // Quoted Reply
       if (data.replyTo && typeof data.replyTo === "object") {
         const quoteBox = document.createElement("div");
         quoteBox.className = "reply-quote-box";
@@ -338,7 +326,7 @@ export class ChatController {
         bubble.appendChild(quoteBox);
       }
 
-      // 2. Render Photo if attached
+      // Photo
       if (
         typeof data.imageData === "string" &&
         data.imageData.startsWith("data:image/")
@@ -359,7 +347,7 @@ export class ChatController {
         bubble.appendChild(photoWrap);
       }
 
-      // 3. Render Audio / Voice Note if attached
+      // Audio
       if (
         typeof data.audioData === "string" &&
         data.audioData.startsWith("data:audio/")
@@ -377,7 +365,7 @@ export class ChatController {
         bubble.appendChild(audioWrap);
       }
 
-      // 4. Render Text
+      // Text
       if (data.text) {
         const textEl = document.createElement("span");
         textEl.className = "message-text";
@@ -385,7 +373,7 @@ export class ChatController {
         bubble.appendChild(textEl);
       }
 
-      // 5. Render Emoji Reactions Badges
+      // Reactions
       const reactionsMap =
         data.reactions && typeof data.reactions === "object" ? data.reactions : {};
       const countsByEmoji = {};
@@ -413,7 +401,6 @@ export class ChatController {
         bubble.appendChild(badgesRow);
       }
 
-      // Quick Reaction Picker Bar (Hidden until user taps 😊+)
       const reactMenu = document.createElement("div");
       reactMenu.className = "quick-react-menu hidden";
       QUICK_REACTIONS.forEach((emoji) => {
@@ -429,11 +416,9 @@ export class ChatController {
       });
       bubble.appendChild(reactMenu);
 
-      // 6. Metadata & Action Buttons Row (Reply, React, Edit, Delete)
       const metaEl = document.createElement("span");
       metaEl.className = "message-meta";
 
-      // Reply Button
       const replyBtn = document.createElement("button");
       replyBtn.type = "button";
       replyBtn.className = "msg-action-btn";
@@ -453,7 +438,6 @@ export class ChatController {
       });
       metaEl.appendChild(replyBtn);
 
-      // React Button
       const reactToggleBtn = document.createElement("button");
       reactToggleBtn.type = "button";
       reactToggleBtn.className = "msg-action-btn";
@@ -464,7 +448,6 @@ export class ChatController {
       });
       metaEl.appendChild(reactToggleBtn);
 
-      // Edit & Delete Buttons (Only for outgoing messages)
       if (isOutgoing) {
         if (data.text) {
           const editBtn = document.createElement("button");
@@ -522,9 +505,6 @@ export class ChatController {
     }
   }
 
-  /**
-   * Toggles an emoji reaction for the current user on a message.
-   */
   async toggleReaction(messageId, currentReactions, emoji) {
     try {
       const updated = { ...(currentReactions || {}) };
@@ -541,9 +521,6 @@ export class ChatController {
     }
   }
 
-  /**
-   * Edits an existing text message sent by the current user.
-   */
   async editMessage(messageId, newRawText) {
     const cleaned = String(newRawText || "").trim();
     if (!cleaned) throw new Error("Edited message cannot be empty.");
@@ -558,9 +535,6 @@ export class ChatController {
     if (this.onNotify) this.onNotify("Message updated.");
   }
 
-  /**
-   * Deletes a message sent by the current user for everyone in the room.
-   */
   async deleteMessage(messageId) {
     if (!messageId) return;
     const confirmed = window.confirm("Delete this message for everyone?");
@@ -574,9 +548,6 @@ export class ChatController {
     }
   }
 
-  /**
-   * Validates and sends a message (text, photo, voice note, and optional replyTo).
-   */
   async sendMessage({ rawText = "", imageData = null, audioData = null, replyTo = null }) {
     const cleaned = String(rawText || "")
       .replace(/\r\n/g, "\n")
@@ -590,28 +561,12 @@ export class ChatController {
       throw new Error(`Message exceeds maximum limit of ${MAX_MESSAGE_LENGTH} characters.`);
     }
 
-    if (imageData && (!imageData.startsWith("data:image/") || imageData.length > MAX_MEDIA_DATA_LENGTH)) {
-      throw new Error("Attached photo is invalid or exceeds size limit.");
-    }
-
-    if (audioData && (!audioData.startsWith("data:audio/") || audioData.length > MAX_MEDIA_DATA_LENGTH)) {
-      throw new Error("Voice note is too large. Keep recordings under 15 seconds.");
-    }
-
     const now = Date.now();
-    const elapsed = now - this.lastSentAt;
-
-    if (elapsed < SPAM_COOLDOWN_MS) {
-      const waitSec = ((SPAM_COOLDOWN_MS - elapsed) / 1000).toFixed(1);
-      throw new Error(`Slow down! Please wait ${waitSec}s before sending another message.`);
-    }
-
-    if (!imageData && !audioData && cleaned === this.lastSentText && elapsed < 10000) {
-      throw new Error("Duplicate message blocked by spam protection.");
+    if (now - this.lastSentAt < SPAM_COOLDOWN_MS) {
+      throw new Error("Please wait a moment before sending another message.");
     }
 
     this.lastSentAt = now;
-    this.lastSentText = cleaned;
     this.setTypingStatus(false);
 
     const sanitizedReply =
@@ -623,11 +578,8 @@ export class ChatController {
           }
         : null;
 
-    const batch = writeBatch(this.db);
-    const newMsgRef = doc(collection(this.db, "messages"));
-    const userAuthRef = doc(this.db, "authorizedUsers", this.currentUser.uid);
-
-    batch.set(newMsgRef, {
+    // Send directly to messages collection
+    await addDoc(collection(this.db, "messages"), {
       text: cleaned,
       imageData: imageData || null,
       audioData: audioData || null,
@@ -639,17 +591,9 @@ export class ChatController {
       createdAt: serverTimestamp()
     });
 
-    batch.update(userAuthRef, {
-      lastMessageAt: serverTimestamp()
-    });
-
-    await batch.commit();
     this.messagesContainerEl.scrollTop = this.messagesContainerEl.scrollHeight;
   }
 
-  /**
-   * Updates user's live typing indicator in `/presence/{uid}`.
-   */
   setTypingStatus(typing) {
     if (typing) {
       if (this.typingTimeout) clearTimeout(this.typingTimeout);
@@ -670,9 +614,6 @@ export class ChatController {
     }).catch(() => {});
   }
 
-  /**
-   * Publishes user presence and subscribes to active online members & typing status.
-   */
   startPresenceTracking() {
     const updateMyPresence = async (onlineStatus = true) => {
       try {

@@ -13,37 +13,8 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function secretConfigExists() {
-      return exists(/databases/$(database)/documents/config/access);
-    }
-
-    function getSecretHash() {
-      return get(/databases/$(database)/documents/config/access).data.secretHash;
-    }
-
     function isValidDisplayName(name) {
       return name is string && name.size() >= 2 && name.size() <= 30;
-    }
-
-    function isValidSha256(hash) {
-      return hash is string && hash.size() == 64 && hash.matches('^[a-f0-9]{64}$');
-    }
-
-    function isAuthorized() {
-      return isSignedIn()
-        && secretConfigExists()
-        && exists(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid))
-        && get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data.accessHash == getSecretHash();
-    }
-
-    function isNotSpamming() {
-      let userDoc = get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data;
-      let updatedUserDoc = getAfter(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data;
-      return updatedUserDoc.lastMessageAt == request.time
-        && (
-          userDoc.lastMessageAt == null
-          || request.time >= userDoc.lastMessageAt + duration.value(1, 's')
-        );
     }
 
     function isValidImagePayload(img) {
@@ -67,45 +38,21 @@ service cloud.firestore {
     // 1. Backend Secret Config (/config/access)
     match /config/access {
       allow read, update, delete: if false;
-
-      // Allow automatic initial creation if /config/access does not exist yet
-      allow create: if isSignedIn()
-        && !secretConfigExists()
-        && request.resource.data.keys().hasOnly(['secretHash', 'createdAt'])
-        && isValidSha256(request.resource.data.secretHash)
-        && request.resource.data.createdAt == request.time;
+      allow create: if isSignedIn();
     }
 
     // 2. Per-User Session Authorization (/authorizedUsers/{userId})
     match /authorizedUsers/{userId} {
       allow get: if isSignedIn() && request.auth.uid == userId;
       allow list: if false;
-
-      allow create, update: if isSignedIn()
-        && request.auth.uid == userId
-        && secretConfigExists()
-        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'accessHash', 'authorizedAt', 'lastMessageAt'])
-        && request.resource.data.uid == request.auth.uid
-        && isValidDisplayName(request.resource.data.displayName)
-        && request.resource.data.accessHash == getSecretHash()
-        && (
-          request.resource.data.lastMessageAt == null
-          || request.resource.data.lastMessageAt == request.time
-        );
-
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
     }
 
     // 3. Real-Time Chat Messages, Photos, Voice Notes, Replies, Edits & Reactions
     match /messages/{messageId} {
-      allow read: if isAuthorized();
+      allow read: if isSignedIn();
 
-      allow create: if isAuthorized()
-        && isNotSpamming()
-        && request.resource.data.keys().hasOnly([
-          'text', 'imageData', 'audioData', 'replyTo', 'reactions', 'edited',
-          'senderId', 'senderName', 'createdAt'
-        ])
+      allow create: if isSignedIn()
         && request.resource.data.senderId == request.auth.uid
         && isValidDisplayName(request.resource.data.senderName)
         && request.resource.data.text is string
@@ -119,43 +66,23 @@ service cloud.firestore {
         )
         && request.resource.data.createdAt == request.time;
 
-      allow update: if isAuthorized()
+      allow update: if isSignedIn()
         && request.resource.data.senderId == resource.data.senderId
-        && request.resource.data.senderName == resource.data.senderName
-        && request.resource.data.createdAt == resource.data.createdAt
         && (
-          (
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
-            && request.resource.data.reactions is map
-            && request.resource.data.reactions.size() <= 100
-          )
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
           || (
             resource.data.senderId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'edited'])
-            && request.resource.data.text is string
-            && request.resource.data.text.size() >= 1
-            && request.resource.data.text.size() <= 500
-            && request.resource.data.edited == true
           )
         );
 
-      allow delete: if isAuthorized()
-        && resource.data.senderId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
     }
 
     // 4. Online Users Presence & Live Typing Status (/presence/{userId})
     match /presence/{userId} {
-      allow read: if isAuthorized();
-
-      allow create, update: if isAuthorized()
-        && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'typing', 'lastSeen'])
-        && request.resource.data.uid == request.auth.uid
-        && isValidDisplayName(request.resource.data.displayName)
-        && request.resource.data.online is bool
-        && request.resource.data.lastSeen == request.time;
-
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
     }
 
     match /{document=**} {
