@@ -2,24 +2,26 @@
  * ============================================================================
  * PRIVATE CHAT — RUNTIME CONFIGURATION LOADER (js/config.js)
  * ============================================================================
- * No credentials or secret codes are hardcoded in this file.
+ * Pre-configured with the public Firebase Web SDK client identifiers for
+ * `private-chat-920cb` so all visitors connect automatically without manual
+ * setup.
  *
- * You can configure your Firebase Web SDK project in two ways:
- * 1. In-Browser on Android (Zero-code): Open the website and paste your
- *    `firebaseConfig` into the Setup Modal (saved in browser localStorage).
- * 2. Repository Config: Paste your public Firebase Web App config strings into
- *    `DEFAULT_FIREBASE_CONFIG` below so all visitors automatically connect to
- *    your Firebase project without pasting config manually.
+ * Security Note:
+ * - Firebase Web SDK identifiers (apiKey, projectId, appId) are public client
+ *   identifiers intended for browser apps and protected by Cloud Firestore
+ *   Security Rules (`firestore.rules`) + Authorized Domains.
+ * - The room's Secret Access Code is NEVER stored here; it is verified
+ *   server-side as a SHA-256 hash against `/config/access` in Firestore.
  * ============================================================================
  */
 
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyDD4ctSK2oTprUSHyl6QO1-Ue21w4RVsL8",
+  authDomain: "private-chat-920cb.firebaseapp.com",
+  projectId: "private-chat-920cb",
+  storageBucket: "private-chat-920cb.firebasestorage.app",
+  messagingSenderId: "491651105911",
+  appId: "1:491651105911:web:e1dc7abbc0670357eef272"
 };
 
 const STORAGE_KEY_FIREBASE_CONFIG = "private_chat_firebase_config_v1";
@@ -39,12 +41,15 @@ export function isValidFirebaseConfig(cfg) {
 }
 
 /**
- * Loads the active Firebase configuration from:
- * 1. URL query parameter `?firebaseConfig=<base64>` (optional share link)
- * 2. Browser `localStorage` (set via the Android Setup Modal)
- * 3. `DEFAULT_FIREBASE_CONFIG` in `js/config.js`
+ * Loads the active Firebase configuration:
+ * 1. Uses pre-configured `DEFAULT_FIREBASE_CONFIG` so friends connect automatically.
+ * 2. Falls back to URL query parameter `?cfg=<base64>` or `localStorage` if customized.
  */
 export function getFirebaseConfig() {
+  if (isValidFirebaseConfig(DEFAULT_FIREBASE_CONFIG)) {
+    return DEFAULT_FIREBASE_CONFIG;
+  }
+
   try {
     const params = new URLSearchParams(window.location.search);
     const encoded = params.get("cfg");
@@ -70,10 +75,6 @@ export function getFirebaseConfig() {
     }
   } catch (_) {
     // Ignore storage read errors
-  }
-
-  if (isValidFirebaseConfig(DEFAULT_FIREBASE_CONFIG)) {
-    return DEFAULT_FIREBASE_CONFIG;
   }
 
   return null;
