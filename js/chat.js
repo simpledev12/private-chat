@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * PRIVATE CHAT — REAL-TIME FIRESTORE CHAT, PRESENCE & EMOJIS (js/chat.js)
+ * PRIVATE CHAT — REAL-TIME FIRESTORE CHAT, PHOTOS, DELETE & PRESENCE (js/chat.js)
  * ============================================================================
  */
 
@@ -12,11 +12,13 @@ import {
   limitToLast,
   onSnapshot,
   setDoc,
+  deleteDoc,
   writeBatch,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 export const MAX_MESSAGE_LENGTH = 500;
+export const MAX_IMAGE_DATA_LENGTH = 240000;
 export const SPAM_COOLDOWN_MS = 1500;
 const PRESENCE_HEARTBEAT_MS = 30000;
 const PRESENCE_STALE_MS = 95000;
@@ -99,7 +101,62 @@ function formatDateHeading(timestamp) {
 }
 
 /**
- * Manages real-time messages, online presence, and spam rate-limiting.
+ * Compresses a selected image file on the client using an HTML5 Canvas so it can
+ * be stored directly inside Cloud Firestore on the 100% Free Spark Plan
+ * (no paid Firebase Storage / Blaze plan required).
+ */
+export function compressImageFile(file, maxDimension = 720, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith("image/")) {
+      reject(new Error("Please select a valid image file."));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read the selected image."));
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Invalid or corrupted image file."));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width >= height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+
+        let dataUrl = canvas.toDataURL("image/jpeg", quality);
+        if (dataUrl.length > MAX_IMAGE_DATA_LENGTH) {
+          // Compress slightly further if the photo is very detailed
+          dataUrl = canvas.toDataURL("image/jpeg", 0.52);
+        }
+
+        if (dataUrl.length > MAX_IMAGE_DATA_LENGTH) {
+          reject(new Error("Photo is too large even after compression. Please pick a smaller photo."));
+          return;
+        }
+
+        const approxKb = Math.round((dataUrl.length * 3) / 4 / 1024);
+        resolve({ dataUrl, approxKb, width, height });
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Manages real-time messages, photos, message deletion, online presence, and spam rate-limiting.
  */
 export class ChatController {
   constructor({
@@ -109,7 +166,9 @@ export class ChatController {
     messagesContainerEl,
     onlineCountEl,
     onlineUsersListEl,
-    onPermissionRevoked
+    onPermissionRevoked,
+    onPhotoClick,
+    onNotify
   }) {
     this.db = db;
     this.currentUser = currentUser;
@@ -118,6 +177,8 @@ export class ChatController {
     this.onlineCountEl = onlineCountEl;
     this.onlineUsersListEl = onlineUsersListEl;
     this.onPermissionRevoked = onPermissionRevoked;
+    this.onPhotoClick = onPhotoClick;
+    this.onNotify = onNotify;
 
     this.unsubscribeMessages = null;
     this.unsubscribePresence = null;
@@ -161,7 +222,7 @@ export class ChatController {
   }
 
   /**
-   * Renders all messages cleanly using safe DOM textContent (XSS-proof).
+   * Renders all messages, photos, and sender-only delete buttons safely.
    */
   renderMessages(docs) {
     const container = this.messagesContainerEl;
@@ -172,6 +233,7 @@ export class ChatController {
     let lastDateLabel = null;
 
     docs.forEach((docSnap) => {
+      const msgId = docSnap.id;
       const data = docSnap.data();
       const dateLabel = formatDateHeading(data.createdAt);
 
@@ -198,10 +260,33 @@ export class ChatController {
         bubble.appendChild(senderEl);
       }
 
-      const textEl = document.createElement("span");
-      textEl.className = "message-text";
-      textEl.textContent = data.text || "";
-      bubble.appendChild(textEl);
+      // Render Photo if attached (strictly validate data:image/ prefix)
+      if (
+        typeof data.imageData === "string" &&
+        data.imageData.startsWith("data:image/")
+      ) {
+        const photoWrap = document.createElement("div");
+        photoWrap.className = "message-photo-wrap";
+
+        const imgEl = document.createElement("img");
+        imgEl.className = "message-photo";
+        imgEl.src = data.imageData;
+        imgEl.alt = `Photo from ${data.senderName || "Member"}`;
+        imgEl.loading = "lazy";
+        imgEl.addEventListener("click", () => {
+          if (this.onPhotoClick) this.onPhotoClick(data.imageData);
+        });
+
+        photoWrap.appendChild(imgEl);
+        bubble.appendChild(photoWrap);
+      }
+
+      if (data.text) {
+        const textEl = document.createElement("span");
+        textEl.className = "message-text";
+        textEl.textContent = data.text;
+        bubble.appendChild(textEl);
+      }
 
       const metaEl = document.createElement("span");
       metaEl.className = "message-meta";
@@ -215,6 +300,19 @@ export class ChatController {
         checkEl.className = "check-icon";
         checkEl.textContent = "✓✓";
         metaEl.appendChild(checkEl);
+
+        // Delete button (only shown on user's own messages)
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "delete-msg-btn";
+        delBtn.title = "Delete message for everyone";
+        delBtn.setAttribute("aria-label", "Delete message");
+        delBtn.textContent = "🗑️";
+        delBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await this.deleteMessage(msgId);
+        });
+        metaEl.appendChild(delBtn);
       }
 
       bubble.appendChild(metaEl);
@@ -228,19 +326,43 @@ export class ChatController {
   }
 
   /**
-   * Validates and sends a chat message with rate limiting and spam protection.
+   * Deletes a message sent by the current user for everyone in the room.
    */
-  async sendMessage(rawText) {
+  async deleteMessage(messageId) {
+    if (!messageId) return;
+    const confirmed = window.confirm("Delete this message for everyone?");
+    if (!confirmed) return;
+
+    try {
+      await deleteDoc(doc(this.db, "messages", messageId));
+      if (this.onNotify) {
+        this.onNotify("Message deleted for everyone.");
+      }
+    } catch (err) {
+      if (this.onNotify) {
+        this.onNotify(err?.message || "Could not delete message.");
+      }
+    }
+  }
+
+  /**
+   * Validates and sends a chat message (text, photo, or photo + caption) with spam protection.
+   */
+  async sendMessage(rawText, imageData = null) {
     const cleaned = String(rawText || "")
       .replace(/\r\n/g, "\n")
       .trim();
 
-    if (!cleaned) {
-      throw new Error("Cannot send an empty message.");
+    if (!cleaned && !imageData) {
+      throw new Error("Please enter a message or attach a photo.");
     }
 
     if (cleaned.length > MAX_MESSAGE_LENGTH) {
       throw new Error(`Message exceeds maximum limit of ${MAX_MESSAGE_LENGTH} characters.`);
+    }
+
+    if (imageData && (!imageData.startsWith("data:image/") || imageData.length > MAX_IMAGE_DATA_LENGTH)) {
+      throw new Error("Attached photo is invalid or exceeds size limit.");
     }
 
     const now = Date.now();
@@ -251,7 +373,7 @@ export class ChatController {
       throw new Error(`Slow down! Please wait ${waitSec}s before sending another message.`);
     }
 
-    if (cleaned === this.lastSentText && elapsed < 10000) {
+    if (!imageData && cleaned === this.lastSentText && elapsed < 10000) {
       throw new Error("Duplicate message blocked by spam protection.");
     }
 
@@ -265,6 +387,7 @@ export class ChatController {
 
     batch.set(newMsgRef, {
       text: cleaned,
+      imageData: imageData || null,
       senderId: this.currentUser.uid,
       senderName: this.currentUser.displayName,
       createdAt: serverTimestamp()

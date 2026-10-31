@@ -4,25 +4,11 @@ rules_version = '2';
  * ============================================================================
  * PRIVATE CHAT — CLOUD FIRESTORE SECURITY RULES (firestore.rules)
  * ============================================================================
- * Backend Security Guarantees (Firebase Spark Plan — Zero Cost):
- * 1. Secret Access Code Verification:
- *    - The SHA-256 hash of the room's Secret Access Code is stored in
- *      `/config/access` (`{ secretHash: "<64-char-sha256-hex>" }`).
- *    - `/config/access` has `allow read: if false;` so NO frontend client or
- *      attacker can ever read or list the secret hash.
- *    - When a user signs in, their write to `/authorizedUsers/{uid}` is only
- *      accepted if `request.resource.data.accessHash` equals
- *      `get(/databases/$(database)/documents/config/access).data.secretHash`.
- * 2. Unauthorized Read/Write Prevention:
- *    - Reading or writing `/messages` or `/presence` requires a verified
- *      `/authorizedUsers/{uid}` record whose `accessHash` matches the current
- *      `/config/access.secretHash`.
- * 3. Message Validation & Anti-Spam Rate Limiting:
- *    - Enforces display name length (2..30 chars) and message length (1..500 chars).
- *    - Prevents sender UID spoofing (`senderId == request.auth.uid`) and
- *      timestamp forgery (`createdAt == request.time`).
- *    - Enforces a minimum 1-second server-side cooldown between messages via
- *      atomic `lastMessageAt` timestamp verification.
+ * Supports:
+ * 1. Backend Secret Access Code verification (/config/access.secretHash)
+ * 2. Real-time text messages (up to 500 chars) + compressed photos (Spark Plan)
+ * 3. Sender-only Message Deletion ("Delete for Everyone")
+ * 4. Anti-spam 1-second server-side rate limiting
  * ============================================================================
  */
 
@@ -66,6 +52,15 @@ service cloud.firestore {
         );
     }
 
+    function isValidImagePayload(img) {
+      return img == null
+        || (
+          img is string
+          && img.size() <= 250000
+          && img.matches('^data:image/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$')
+        );
+    }
+
     // 1. Backend Secret Config (/config/access) — Unreadable by any client
     match /config/access {
       allow read, update, delete: if false;
@@ -97,21 +92,26 @@ service cloud.firestore {
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
-    // 3. Real-Time Chat Messages (/messages/{messageId})
+    // 3. Real-Time Chat Messages & Photos (/messages/{messageId})
     match /messages/{messageId} {
       allow read: if isAuthorized();
 
       allow create: if isAuthorized()
         && isNotSpamming()
-        && request.resource.data.keys().hasOnly(['text', 'senderId', 'senderName', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['text', 'imageData', 'senderId', 'senderName', 'createdAt'])
         && request.resource.data.senderId == request.auth.uid
         && isValidDisplayName(request.resource.data.senderName)
         && request.resource.data.text is string
-        && request.resource.data.text.size() >= 1
         && request.resource.data.text.size() <= 500
+        && isValidImagePayload(request.resource.data.imageData)
+        && (request.resource.data.text.size() >= 1 || request.resource.data.imageData != null)
         && request.resource.data.createdAt == request.time;
 
-      allow update, delete: if false;
+      // Only the original sender of a message can delete it ("Delete for Everyone")
+      allow delete: if isAuthorized()
+        && resource.data.senderId == request.auth.uid;
+
+      allow update: if false;
     }
 
     // 4. Online Users Presence (/presence/{userId})

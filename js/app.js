@@ -24,7 +24,8 @@ import {
 import {
   ChatController,
   EMOJI_CATEGORIES,
-  MAX_MESSAGE_LENGTH
+  MAX_MESSAGE_LENGTH,
+  compressImageFile
 } from "./chat.js";
 
 // DOM Elements
@@ -59,6 +60,17 @@ const emojiPicker = document.getElementById("emoji-picker");
 const emojiGrid = document.getElementById("emoji-grid");
 const emojiTabs = document.querySelectorAll(".emoji-tab");
 
+const photoBtn = document.getElementById("photo-btn");
+const photoInput = document.getElementById("photo-input");
+const photoPreviewBar = document.getElementById("photo-preview-bar");
+const photoPreviewImg = document.getElementById("photo-preview-img");
+const photoPreviewSize = document.getElementById("photo-preview-size");
+const removePhotoBtn = document.getElementById("remove-photo-btn");
+
+const lightboxModal = document.getElementById("lightbox-modal");
+const lightboxImg = document.getElementById("lightbox-img");
+const closeLightboxBtn = document.getElementById("close-lightbox-btn");
+
 const messageForm = document.getElementById("message-form");
 const messageInput = document.getElementById("message-input");
 const charCounter = document.getElementById("char-counter");
@@ -84,6 +96,7 @@ let auth = null;
 let db = null;
 let chatController = null;
 let activeUser = null;
+let pendingImageData = null;
 let toastTimeout = null;
 
 /**
@@ -187,6 +200,13 @@ function enterChatRoom(userProfile) {
     onlineUsersListEl: onlineUsersList,
     onPermissionRevoked: async (reason) => {
       await handleLogout(reason);
+    },
+    onPhotoClick: (src) => {
+      lightboxImg.src = src;
+      lightboxModal.classList.remove("hidden");
+    },
+    onNotify: (msg) => {
+      showComposerToast(msg);
     }
   });
 
@@ -203,6 +223,7 @@ async function handleLogout(alertReason = "") {
     chatController = null;
   }
 
+  clearPendingPhoto();
   await logoutAndRevoke({ auth, db, uid });
 
   chatView.classList.remove("active");
@@ -321,7 +342,53 @@ emojiTabs.forEach((tab) => {
 });
 
 /**
- * 8. Message Composer & Character Limit
+ * 8. Photo Attachment, Compression & Lightbox Viewer
+ */
+function clearPendingPhoto() {
+  pendingImageData = null;
+  photoInput.value = "";
+  photoPreviewImg.src = "";
+  photoPreviewBar.classList.add("hidden");
+}
+
+photoBtn.addEventListener("click", () => {
+  photoInput.click();
+});
+
+photoInput.addEventListener("change", async () => {
+  const file = photoInput.files?.[0];
+  if (!file) return;
+
+  try {
+    showComposerToast("Compressing photo...");
+    const { dataUrl, approxKb, width, height } = await compressImageFile(file);
+    pendingImageData = dataUrl;
+    photoPreviewImg.src = dataUrl;
+    photoPreviewSize.textContent = `Ready • ${width}×${height} (~${approxKb} KB)`;
+    photoPreviewBar.classList.remove("hidden");
+    messageInput.focus();
+  } catch (err) {
+    clearPendingPhoto();
+    showComposerToast(err.message || "Failed to process photo.");
+  }
+});
+
+removePhotoBtn.addEventListener("click", clearPendingPhoto);
+
+closeLightboxBtn.addEventListener("click", () => {
+  lightboxModal.classList.add("hidden");
+  lightboxImg.src = "";
+});
+
+lightboxModal.addEventListener("click", (e) => {
+  if (e.target === lightboxModal) {
+    lightboxModal.classList.add("hidden");
+    lightboxImg.src = "";
+  }
+});
+
+/**
+ * 9. Message Composer & Character Limit
  */
 function updateCharCounter() {
   const len = messageInput.value.length;
@@ -336,25 +403,33 @@ messageForm.addEventListener("submit", async (e) => {
   if (!chatController) return;
 
   const rawText = messageInput.value;
-  if (!rawText.trim()) return;
+  const attachedPhoto = pendingImageData;
+
+  if (!rawText.trim() && !attachedPhoto) return;
 
   try {
     messageInput.value = "";
     updateCharCounter();
+    clearPendingPhoto();
     emojiPicker.classList.add("hidden");
-    await chatController.sendMessage(rawText);
+    await chatController.sendMessage(rawText, attachedPhoto);
   } catch (err) {
-    // Restore text if rate-limited so user doesn't lose their message
-    if (!messageInput.value) {
+    // Restore text and photo if rate-limited so user doesn't lose their message
+    if (!messageInput.value && rawText) {
       messageInput.value = rawText;
       updateCharCounter();
+    }
+    if (!pendingImageData && attachedPhoto) {
+      pendingImageData = attachedPhoto;
+      photoPreviewImg.src = attachedPhoto;
+      photoPreviewBar.classList.remove("hidden");
     }
     showComposerToast(err.message || "Could not send message.");
   }
 });
 
 /**
- * 9. Firebase Configuration Modal & SHA-256 Helper
+ * 10. Firebase Configuration Modal & SHA-256 Helper
  */
 openConfigBtn.addEventListener("click", () => {
   const existing = getFirebaseConfig();
@@ -427,7 +502,6 @@ initTheme();
 renderEmojiCategory("smileys");
 const connected = initFirebaseClient();
 if (!connected) {
-  // Show setup prompt banner on first visit until Firebase is configured
   showLoginAlert(
     "Step 1: Tap the gear icon (top right) to paste your Firebase Web SDK config, or add it to js/config.js."
   );

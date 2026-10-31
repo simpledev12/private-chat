@@ -1,6 +1,6 @@
 /* ==========================================================================
    PRIVATE CHAT — MODERN WHATSAPP-INSPIRED MOBILE-FIRST STYLESHEET
-   Supports Light & Dark Mode, Android Mobile Safe Areas, and Smooth UI
+   Supports Light & Dark Mode, Photos, Message Deletion, & Safe Areas
    ========================================================================== */
 
 :root,
@@ -506,7 +506,7 @@ body {
 }
 
 /* ==========================================================================
-   MESSAGES STREAM & WHATSAPP BUBBLES
+   MESSAGES STREAM, PHOTOS & DELETE BUTTON
    ========================================================================== */
 
 .messages-container {
@@ -607,29 +607,50 @@ body {
   display: block;
   font-size: 12px;
   font-weight: 700;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
+}
+
+.message-photo-wrap {
+  margin-bottom: 5px;
+  border-radius: 9px;
+  overflow: hidden;
+  max-width: 260px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.message-photo {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  cursor: zoom-in;
+  border-radius: 9px;
+  transition: opacity 0.15s ease;
+}
+
+.message-photo:active {
+  opacity: 0.85;
 }
 
 .message-text {
+  display: block;
   font-size: 14.5px;
   line-height: 1.4;
   white-space: pre-wrap;
 }
 
 .message-meta {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
-  float: right;
-  margin-left: 10px;
+  gap: 6px;
   margin-top: 4px;
   font-size: 10.5px;
   color: var(--text-secondary);
 }
 
 .message-row.outgoing .message-meta {
-  color: rgba(233, 237, 239, 0.72);
+  color: rgba(233, 237, 239, 0.78);
 }
 
 [data-theme="light"] .message-row.outgoing .message-meta {
@@ -639,6 +660,116 @@ body {
 .check-icon {
   color: #53bdeb;
   font-size: 11px;
+}
+
+.delete-msg-btn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.78;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+  line-height: 1;
+}
+
+.delete-msg-btn:hover,
+.delete-msg-btn:active {
+  opacity: 1;
+  background-color: rgba(241, 92, 109, 0.22);
+}
+
+/* ==========================================================================
+   PHOTO PREVIEW BAR & LIGHTBOX MODAL
+   ========================================================================== */
+
+.photo-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: var(--bg-card);
+  border-top: 1px solid var(--border-color);
+  gap: 10px;
+}
+
+.photo-preview-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.photo-preview-thumb {
+  width: 46px;
+  height: 46px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.photo-preview-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.photo-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.photo-preview-sub {
+  font-size: 11.5px;
+  color: var(--accent);
+}
+
+.remove-photo-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 200;
+}
+
+.lightbox-img {
+  max-width: 96vw;
+  max-height: 88dvh;
+  border-radius: 10px;
+  object-fit: contain;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.lightbox-close-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  font-size: 18px;
+  cursor: pointer;
 }
 
 /* ==========================================================================
@@ -720,23 +851,35 @@ body {
   font-weight: 600;
   box-shadow: var(--shadow-lg);
   white-space: nowrap;
+  z-index: 20;
 }
 
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.emoji-btn {
-  width: 40px;
-  height: 40px;
+.emoji-btn,
+.photo-btn {
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   border: none;
   background-color: var(--bg-input);
-  font-size: 20px;
+  color: var(--text-primary);
+  font-size: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.emoji-btn:active,
+.photo-btn:active {
+  transform: scale(0.94);
 }
 
 .composer-input-wrap {
@@ -748,7 +891,7 @@ body {
 
 .composer-input-wrap input {
   width: 100%;
-  padding: 11px 58px 11px 14px;
+  padding: 11px 54px 11px 13px;
   border-radius: 999px;
   border: 1px solid var(--border-color);
   background-color: var(--bg-input);
@@ -759,8 +902,8 @@ body {
 
 .char-counter {
   position: absolute;
-  right: 12px;
-  font-size: 11px;
+  right: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
   pointer-events: none;
 }
@@ -771,8 +914,8 @@ body {
 }
 
 .send-btn {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: none;
   background-color: var(--accent);

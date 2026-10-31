@@ -184,7 +184,7 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>Messages are protected by Cloud Firestore Security Rules. Only verified members with the Secret Access Code can read or send messages.</span>
+          <span>Messages &amp; photos are protected by Cloud Firestore Security Rules. Tap 🗑️ on your own message to delete it for everyone.</span>
         </div>
         <div id="messages-list" class="messages-list"></div>
       </main>
@@ -201,6 +201,20 @@
         <div id="emoji-grid" class="emoji-grid"></div>
       </div>
 
+      <!-- Selected Photo Preview Bar (Before Sending) -->
+      <div id="photo-preview-bar" class="photo-preview-bar hidden" aria-label="Selected Photo Preview">
+        <div class="photo-preview-left">
+          <img id="photo-preview-img" src="" alt="Selected preview" class="photo-preview-thumb" />
+          <div class="photo-preview-meta">
+            <span class="photo-preview-title">Photo ready to send</span>
+            <span id="photo-preview-size" class="photo-preview-sub">Compressed for instant chat</span>
+          </div>
+        </div>
+        <button id="remove-photo-btn" type="button" class="remove-photo-btn" aria-label="Remove selected photo" title="Remove photo">
+          ✕
+        </button>
+      </div>
+
       <!-- Chat Composer Footer -->
       <footer class="chat-composer">
         <div id="composer-toast" class="composer-toast hidden" role="status"></div>
@@ -208,12 +222,22 @@
           <button id="emoji-toggle-btn" type="button" class="emoji-btn" aria-label="Choose Emoji" title="Insert Emoji">
             😊
           </button>
+
+          <!-- Hidden File Input for Photo Selection (Gallery or Camera) -->
+          <input id="photo-input" type="file" accept="image/*" class="hidden" />
+          <button id="photo-btn" type="button" class="photo-btn" aria-label="Send Photo" title="Send Photo">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+          </button>
+
           <div class="composer-input-wrap">
             <input
               id="message-input"
               type="text"
               maxlength="500"
-              placeholder="Message"
+              placeholder="Message or photo caption..."
               aria-label="Type a message"
             />
             <span id="char-counter" class="char-counter">0/500</span>
@@ -226,6 +250,14 @@
         </form>
       </footer>
     </section>
+
+    <!-- ================================================================== -->
+    <!-- MODAL: FULL-SCREEN PHOTO LIGHTBOX VIEWER                           -->
+    <!-- ================================================================== -->
+    <div id="lightbox-modal" class="lightbox-backdrop hidden" role="dialog" aria-modal="true" aria-label="Full-screen photo viewer">
+      <button id="close-lightbox-btn" type="button" class="lightbox-close-btn" aria-label="Close photo viewer">✕</button>
+      <img id="lightbox-img" src="" alt="Full screen chat photo" class="lightbox-img" />
+    </div>
 
     <!-- ================================================================== -->
     <!-- MODAL: FIREBASE PROJECT CONFIGURATION & SHA-256 HELPER             -->
@@ -259,7 +291,7 @@
           ></textarea>
 
           <div class="modal-actions">
-            <button id="save-config-btn" type="button" class="primary-btn">Save & Connect Firebase</button>
+            <button id="save-config-btn" type="button" class="primary-btn">Save &amp; Connect Firebase</button>
             <button id="share-config-btn" type="button" class="secondary-btn">Copy Shareable Setup Link</button>
           </div>
 
