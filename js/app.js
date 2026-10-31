@@ -8,17 +8,13 @@ import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebase
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
-import {
-  getFirebaseConfig,
-  saveFirebaseConfigFromInput
-} from "./config.js";
+import { getFirebaseConfig } from "./config.js";
 
 import {
   loginWithAccessCode,
   checkExistingSession,
   logoutAndRevoke,
-  onAuthStateChanged,
-  sha256Hex
+  onAuthStateChanged
 } from "./auth.js";
 
 import {
@@ -34,13 +30,11 @@ const chatView = document.getElementById("chat-view");
 
 const connectionPill = document.getElementById("connection-pill");
 const connectionPillText = document.getElementById("connection-pill-text");
-const openConfigBtn = document.getElementById("open-config-btn");
 
 const loginForm = document.getElementById("login-form");
 const displayNameInput = document.getElementById("display-name-input");
 const accessCodeInput = document.getElementById("access-code-input");
 const toggleCodeBtn = document.getElementById("toggle-code-visibility");
-const initRoomCheckbox = document.getElementById("init-room-checkbox");
 const joinBtn = document.getElementById("join-btn");
 const joinBtnText = document.getElementById("join-btn-text");
 const loginAlert = document.getElementById("login-alert");
@@ -90,17 +84,6 @@ const messageForm = document.getElementById("message-form");
 const messageInput = document.getElementById("message-input");
 const charCounter = document.getElementById("char-counter");
 const composerToast = document.getElementById("composer-toast");
-
-const configModal = document.getElementById("config-modal");
-const closeConfigModal = document.getElementById("close-config-modal");
-const firebaseConfigTextarea = document.getElementById("firebase-config-textarea");
-const saveConfigBtn = document.getElementById("save-config-btn");
-const shareConfigBtn = document.getElementById("share-config-btn");
-const configModalAlert = document.getElementById("config-modal-alert");
-
-const hashHelperInput = document.getElementById("hash-helper-input");
-const hashHelperOutput = document.getElementById("hash-helper-output");
-const copyHashBtn = document.getElementById("copy-hash-btn");
 
 const themeToggleLogin = document.getElementById("theme-toggle-login");
 const themeToggleChat = document.getElementById("theme-toggle-chat");
@@ -173,17 +156,10 @@ function showComposerToast(message) {
 }
 
 /**
- * 3. Initialize Firebase Web SDK from Configuration
+ * 3. Initialize Firebase Web SDK from Locked Configuration
  */
 function initFirebaseClient() {
   const cfg = getFirebaseConfig();
-  if (!cfg) {
-    connectionPill.classList.remove("connected");
-    connectionPill.classList.add("disconnected");
-    connectionPillText.textContent = "Tap Gear Icon to Connect Firebase";
-    return false;
-  }
-
   try {
     firebaseApp = getApps().length ? getApp() : initializeApp(cfg);
     auth = getAuth(firebaseApp);
@@ -191,7 +167,7 @@ function initFirebaseClient() {
 
     connectionPill.classList.remove("disconnected");
     connectionPill.classList.add("connected");
-    connectionPillText.textContent = `Connected: ${cfg.projectId}`;
+    connectionPillText.textContent = "Secure Room Ready";
 
     onAuthStateChanged(auth, async (user) => {
       if (user && !activeUser) {
@@ -204,7 +180,7 @@ function initFirebaseClient() {
 
     return true;
   } catch (err) {
-    showLoginAlert(`Firebase initialization error: ${err.message}`);
+    showLoginAlert(`Connection error: ${err.message}`);
     return false;
   }
 }
@@ -324,19 +300,14 @@ loginForm.addEventListener("submit", async (e) => {
   hideLoginAlert();
 
   if (!auth || !db) {
-    const initialized = initFirebaseClient();
-    if (!initialized) {
-      configModal.classList.remove("hidden");
-      return;
-    }
+    initFirebaseClient();
   }
 
   const displayName = displayNameInput.value;
   const accessCode = accessCodeInput.value;
-  const initializeRoom = initRoomCheckbox.checked;
 
   joinBtn.disabled = true;
-  joinBtnText.textContent = "Verifying with Firebase...";
+  joinBtnText.textContent = "Verifying...";
 
   try {
     const userProfile = await loginWithAccessCode({
@@ -344,12 +315,11 @@ loginForm.addEventListener("submit", async (e) => {
       db,
       displayName,
       accessCode,
-      initializeRoom
+      initializeRoom: false
     });
-    initRoomCheckbox.checked = false;
     enterChatRoom(userProfile);
   } catch (err) {
-    showLoginAlert(err.message || "Failed to join room.");
+    showLoginAlert(err.message || "Invalid access code.");
   } finally {
     joinBtn.disabled = false;
     joinBtnText.textContent = "Join Private Room";
@@ -584,7 +554,6 @@ messageForm.addEventListener("submit", async (e) => {
   const rawText = messageInput.value;
   const attachedPhoto = pendingImageData;
 
-  // Handle Edit Mode if active
   if (activeEditMessage) {
     const editId = activeEditMessage.id;
     try {
@@ -627,81 +596,7 @@ messageForm.addEventListener("submit", async (e) => {
   }
 });
 
-/**
- * 11. Firebase Configuration Modal & SHA-256 Helper
- */
-openConfigBtn.addEventListener("click", () => {
-  const existing = getFirebaseConfig();
-  if (existing) {
-    firebaseConfigTextarea.value = JSON.stringify(existing, null, 2);
-  }
-  configModalAlert.classList.add("hidden");
-  configModal.classList.remove("hidden");
-});
-
-closeConfigModal.addEventListener("click", () => {
-  configModal.classList.add("hidden");
-});
-
-saveConfigBtn.addEventListener("click", () => {
-  try {
-    saveFirebaseConfigFromInput(firebaseConfigTextarea.value);
-    configModalAlert.textContent = "Firebase config saved! Reloading connection...";
-    configModalAlert.classList.add("success");
-    configModalAlert.classList.remove("hidden");
-    setTimeout(() => {
-      window.location.reload();
-    }, 600);
-  } catch (err) {
-    configModalAlert.textContent = err.message;
-    configModalAlert.classList.remove("success");
-    configModalAlert.classList.remove("hidden");
-  }
-});
-
-shareConfigBtn.addEventListener("click", async () => {
-  try {
-    const cfg = saveFirebaseConfigFromInput(firebaseConfigTextarea.value);
-    const encoded = btoa(JSON.stringify(cfg));
-    const shareUrl = `${window.location.origin}${window.location.pathname}?cfg=${encodeURIComponent(encoded)}`;
-    await navigator.clipboard.writeText(shareUrl);
-    configModalAlert.textContent = "Shareable setup link copied to clipboard!";
-    configModalAlert.classList.add("success");
-    configModalAlert.classList.remove("hidden");
-  } catch (err) {
-    configModalAlert.textContent = err.message;
-    configModalAlert.classList.remove("success");
-    configModalAlert.classList.remove("hidden");
-  }
-});
-
-hashHelperInput.addEventListener("input", async () => {
-  const val = hashHelperInput.value.trim();
-  if (!val) {
-    hashHelperOutput.textContent = "Enter a code above to generate its 64-char SHA-256 hash";
-    return;
-  }
-  const hash = await sha256Hex(val);
-  hashHelperOutput.textContent = hash;
-});
-
-copyHashBtn.addEventListener("click", async () => {
-  const val = hashHelperInput.value.trim();
-  if (!val) return;
-  const hash = await sha256Hex(val);
-  await navigator.clipboard.writeText(hash);
-  copyHashBtn.textContent = "Copied!";
-  setTimeout(() => {
-    copyHashBtn.textContent = "Copy Hash";
-  }, 1500);
-});
-
 // Bootstrap App on Load
 initTheme();
 renderEmojiCategory("smileys");
-const connected = initFirebaseClient();
-if (!connected) {
-  showLoginAlert(
-    "Step 1: Tap the gear icon (top right) to paste your Firebase Web SDK config, or add it to js/config.js."
-  );
-}
+initFirebaseClient();

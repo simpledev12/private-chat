@@ -19,17 +19,11 @@
     <section id="login-view" class="view active" aria-label="Login Screen">
       <div class="auth-card">
         <div class="auth-top-bar">
-          <span id="connection-pill" class="status-pill disconnected">
+          <span id="connection-pill" class="status-pill connected">
             <span class="status-dot"></span>
-            <span id="connection-pill-text">Firebase Not Configured</span>
+            <span id="connection-pill-text">Secure Room Ready</span>
           </span>
           <div class="auth-top-actions">
-            <button id="open-config-btn" type="button" class="icon-btn" title="Firebase Project Setup" aria-label="Firebase Project Setup">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-            </button>
             <button id="theme-toggle-login" type="button" class="icon-btn" title="Toggle Light/Dark Mode" aria-label="Toggle Light/Dark Mode">
               <svg class="sun-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="5"></circle>
@@ -55,7 +49,7 @@
             </svg>
           </div>
           <h1>Private Chat</h1>
-          <p class="auth-subtitle">End-to-end Firestore rules protected room. Enter your display name and the shared secret access code to join.</p>
+          <p class="auth-subtitle">Enter your display name and the shared secret access code to join the room.</p>
         </div>
 
         <div id="login-alert" class="alert-banner hidden" role="alert"></div>
@@ -91,14 +85,7 @@
                 Show
               </button>
             </div>
-            <span class="field-hint">Verified via SHA-256 against Cloud Firestore Security Rules</span>
-          </div>
-
-          <div class="form-group checkbox-group">
-            <label class="checkbox-label" for="init-room-checkbox">
-              <input id="init-room-checkbox" type="checkbox" />
-              <span>First-time setup: Initialize room with this Secret Access Code</span>
-            </label>
+            <span class="field-hint">Protected by Cloud Firestore Security Rules</span>
           </div>
 
           <button id="join-btn" type="submit" class="primary-btn">
@@ -111,7 +98,7 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>Zero secret codes in frontend JS • Protected by Firestore Rules</span>
+          <span>End-to-end Firestore Rules Protected Room</span>
         </div>
       </div>
     </section>
@@ -188,7 +175,7 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>Protected by Cloud Firestore Rules. Reply (↩️), React (😊+), Edit (✏️), Delete (🗑️), Send Photos (📷) &amp; Voice Notes (🎤).</span>
+          <span>Protected by Cloud Firestore Rules. Reply (↩️), React (😊), Edit (✏️), Delete (🗑️), Send Photos (📷) &amp; Voice Notes (🎤).</span>
         </div>
         <div id="messages-list" class="messages-list"></div>
       </main>
@@ -292,57 +279,6 @@
     <div id="lightbox-modal" class="lightbox-backdrop hidden" role="dialog" aria-modal="true" aria-label="Full-screen photo viewer">
       <button id="close-lightbox-btn" type="button" class="lightbox-close-btn" aria-label="Close photo viewer">✕</button>
       <img id="lightbox-img" src="" alt="Full screen chat photo" class="lightbox-img" />
-    </div>
-
-    <!-- ================================================================== -->
-    <!-- MODAL: FIREBASE PROJECT CONFIGURATION & SHA-256 HELPER             -->
-    <!-- ================================================================== -->
-    <div id="config-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="config-modal-title">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3 id="config-modal-title">Firebase Project Configuration</h3>
-          <button id="close-config-modal" type="button" class="icon-btn" aria-label="Close modal">✕</button>
-        </div>
-
-        <div class="modal-body">
-          <p class="modal-desc">
-            Paste your <code>firebaseConfig</code> snippet from the Firebase Console (<strong>Project Settings → General → Your apps → Web App</strong>). It will be saved on your device—or edit <code>js/config.js</code> in GitHub to pre-configure it for everyone.
-          </p>
-
-          <div id="config-modal-alert" class="alert-banner hidden"></div>
-
-          <label for="firebase-config-textarea" class="modal-label">Paste <code>firebaseConfig</code> Block</label>
-          <textarea
-            id="firebase-config-textarea"
-            rows="7"
-            placeholder='const firebaseConfig = {
-  apiKey: "AIza...",
-  authDomain: "your-app.firebaseapp.com",
-  projectId: "your-app",
-  storageBucket: "your-app.firebasestorage.app",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
-};'
-          ></textarea>
-
-          <div class="modal-actions">
-            <button id="save-config-btn" type="button" class="primary-btn">Save &amp; Connect Firebase</button>
-            <button id="share-config-btn" type="button" class="secondary-btn">Copy Shareable Setup Link</button>
-          </div>
-
-          <div class="hash-helper-box">
-            <h4>Admin Helper: SHA-256 Access Code Hash Generator</h4>
-            <p class="modal-desc">
-              Want to set or rotate the Secret Access Code manually in Firestore Console? Create document <code>/config/access</code> with field <code>secretHash</code> set to the SHA-256 hash below:
-            </p>
-            <div class="hash-input-row">
-              <input id="hash-helper-input" type="text" placeholder="Type desired secret code to hash..." />
-              <button id="copy-hash-btn" type="button" class="secondary-btn">Copy Hash</button>
-            </div>
-            <code id="hash-helper-output" class="hash-output">Enter a code above to generate its 64-char SHA-256 hash</code>
-          </div>
-        </div>
-      </div>
     </div>
 
   </div>
