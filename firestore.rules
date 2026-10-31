@@ -6,9 +6,10 @@ rules_version = '2';
  * ============================================================================
  * Supports:
  * 1. Backend Secret Access Code verification (/config/access.secretHash)
- * 2. Real-time text messages (up to 500 chars) + compressed photos (Spark Plan)
- * 3. Sender-only Message Deletion ("Delete for Everyone")
- * 4. Anti-spam 1-second server-side rate limiting
+ * 2. Real-time text messages (up to 500 chars), compressed photos & voice notes
+ * 3. Quoted Replies, Emoji Reactions, Edit Own Message, & Delete Own Message
+ * 4. Live Typing Indicator & Online Presence (/presence/{userId})
+ * 5. Anti-spam 1-second server-side rate limiting
  * ============================================================================
  */
 
@@ -61,6 +62,15 @@ service cloud.firestore {
         );
     }
 
+    function isValidAudioPayload(audio) {
+      return audio == null
+        || (
+          audio is string
+          && audio.size() <= 250000
+          && audio.matches('^data:audio/.*')
+        );
+    }
+
     // 1. Backend Secret Config (/config/access) — Unreadable by any client
     match /config/access {
       allow read, update, delete: if false;
@@ -92,35 +102,62 @@ service cloud.firestore {
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
-    // 3. Real-Time Chat Messages & Photos (/messages/{messageId})
+    // 3. Real-Time Chat Messages, Photos, Voice Notes, Replies, Edits & Reactions
     match /messages/{messageId} {
       allow read: if isAuthorized();
 
       allow create: if isAuthorized()
         && isNotSpamming()
-        && request.resource.data.keys().hasOnly(['text', 'imageData', 'senderId', 'senderName', 'createdAt'])
+        && request.resource.data.keys().hasOnly([
+          'text', 'imageData', 'audioData', 'replyTo', 'reactions', 'edited',
+          'senderId', 'senderName', 'createdAt'
+        ])
         && request.resource.data.senderId == request.auth.uid
         && isValidDisplayName(request.resource.data.senderName)
         && request.resource.data.text is string
         && request.resource.data.text.size() <= 500
-        && isValidImagePayload(request.resource.data.imageData)
-        && (request.resource.data.text.size() >= 1 || request.resource.data.imageData != null)
+        && isValidImagePayload(request.resource.data.get('imageData', null))
+        && isValidAudioPayload(request.resource.data.get('audioData', null))
+        && (
+          request.resource.data.text.size() >= 1
+          || request.resource.data.get('imageData', null) != null
+          || request.resource.data.get('audioData', null) != null
+        )
         && request.resource.data.createdAt == request.time;
+
+      // Allow authorized members to react OR the original sender to edit their message text
+      allow update: if isAuthorized()
+        && request.resource.data.senderId == resource.data.senderId
+        && request.resource.data.senderName == resource.data.senderName
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            && request.resource.data.reactions is map
+            && request.resource.data.reactions.size() <= 100
+          )
+          || (
+            resource.data.senderId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'edited'])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() >= 1
+            && request.resource.data.text.size() <= 500
+            && request.resource.data.edited == true
+          )
+        );
 
       // Only the original sender of a message can delete it ("Delete for Everyone")
       allow delete: if isAuthorized()
         && resource.data.senderId == request.auth.uid;
-
-      allow update: if false;
     }
 
-    // 4. Online Users Presence (/presence/{userId})
+    // 4. Online Users Presence & Live Typing Status (/presence/{userId})
     match /presence/{userId} {
       allow read: if isAuthorized();
 
       allow create, update: if isAuthorized()
         && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'lastSeen'])
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'online', 'typing', 'lastSeen'])
         && request.resource.data.uid == request.auth.uid
         && isValidDisplayName(request.resource.data.displayName)
         && request.resource.data.online is bool

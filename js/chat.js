@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * PRIVATE CHAT — REAL-TIME FIRESTORE CHAT, PHOTOS, DELETE & PRESENCE (js/chat.js)
+ * PRIVATE CHAT — REAL-TIME CHAT, REPLIES, REACTIONS, VOICE NOTES, EDIT & DELETE
  * ============================================================================
  */
 
@@ -12,16 +12,20 @@ import {
   limitToLast,
   onSnapshot,
   setDoc,
+  updateDoc,
   deleteDoc,
   writeBatch,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 export const MAX_MESSAGE_LENGTH = 500;
-export const MAX_IMAGE_DATA_LENGTH = 240000;
+export const MAX_MEDIA_DATA_LENGTH = 240000;
 export const SPAM_COOLDOWN_MS = 1500;
 const PRESENCE_HEARTBEAT_MS = 30000;
 const PRESENCE_STALE_MS = 95000;
+const TYPING_STALE_MS = 8000;
+
+export const QUICK_REACTIONS = ["❤️", "😂", "👍", "🔥", "🙏"];
 
 export const EMOJI_CATEGORIES = {
   smileys: [
@@ -62,9 +66,6 @@ const SENDER_COLORS = [
   "#a78bfa"
 ];
 
-/**
- * Deterministic color for each sender's name in group chat bubbles.
- */
 function getSenderColor(senderId) {
   let hash = 0;
   const str = String(senderId || "");
@@ -74,17 +75,11 @@ function getSenderColor(senderId) {
   return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
 }
 
-/**
- * Formats a Firestore Timestamp or Date into HH:MM AM/PM.
- */
 function formatTime(timestamp) {
   const date = timestamp?.toDate ? timestamp.toDate() : new Date();
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-/**
- * Formats a date label for message day dividers (Today, Yesterday, or Date).
- */
 function formatDateHeading(timestamp) {
   const date = timestamp?.toDate ? timestamp.toDate() : new Date();
   const today = new Date();
@@ -101,9 +96,35 @@ function formatDateHeading(timestamp) {
 }
 
 /**
+ * Plays a gentle WhatsApp-inspired incoming message pop sound using Web Audio API
+ * and vibrates lightly on Android devices.
+ */
+export function playIncomingAlert(soundEnabled = true) {
+  try {
+    if (navigator.vibrate) {
+      navigator.vibrate(35);
+    }
+    if (!soundEnabled) return;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(580, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(860, ctx.currentTime + 0.09);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.11);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.11);
+  } catch (_) {}
+}
+
+/**
  * Compresses a selected image file on the client using an HTML5 Canvas so it can
- * be stored directly inside Cloud Firestore on the 100% Free Spark Plan
- * (no paid Firebase Storage / Blaze plan required).
+ * be stored directly inside Cloud Firestore on the 100% Free Spark Plan.
  */
 export function compressImageFile(file, maxDimension = 720, quality = 0.72) {
   return new Promise((resolve, reject) => {
@@ -136,12 +157,11 @@ export function compressImageFile(file, maxDimension = 720, quality = 0.72) {
         ctx.drawImage(img, 0, 0, width, height);
 
         let dataUrl = canvas.toDataURL("image/jpeg", quality);
-        if (dataUrl.length > MAX_IMAGE_DATA_LENGTH) {
-          // Compress slightly further if the photo is very detailed
+        if (dataUrl.length > MAX_MEDIA_DATA_LENGTH) {
           dataUrl = canvas.toDataURL("image/jpeg", 0.52);
         }
 
-        if (dataUrl.length > MAX_IMAGE_DATA_LENGTH) {
+        if (dataUrl.length > MAX_MEDIA_DATA_LENGTH) {
           reject(new Error("Photo is too large even after compression. Please pick a smaller photo."));
           return;
         }
@@ -156,7 +176,7 @@ export function compressImageFile(file, maxDimension = 720, quality = 0.72) {
 }
 
 /**
- * Manages real-time messages, photos, message deletion, online presence, and spam rate-limiting.
+ * Manages real-time messages, replies, reactions, voice notes, edits, deletes, & typing indicators.
  */
 export class ChatController {
   constructor({
@@ -165,40 +185,51 @@ export class ChatController {
     messagesListEl,
     messagesContainerEl,
     onlineCountEl,
+    typingStatusEl,
+    tapViewHintEl,
     onlineUsersListEl,
+    scrollBottomBtnEl,
     onPermissionRevoked,
     onPhotoClick,
-    onNotify
+    onReplySelect,
+    onEditSelect,
+    onNotify,
+    isSoundEnabled
   }) {
     this.db = db;
     this.currentUser = currentUser;
     this.messagesListEl = messagesListEl;
     this.messagesContainerEl = messagesContainerEl;
     this.onlineCountEl = onlineCountEl;
+    this.typingStatusEl = typingStatusEl;
+    this.tapViewHintEl = tapViewHintEl;
     this.onlineUsersListEl = onlineUsersListEl;
+    this.scrollBottomBtnEl = scrollBottomBtnEl;
     this.onPermissionRevoked = onPermissionRevoked;
     this.onPhotoClick = onPhotoClick;
+    this.onReplySelect = onReplySelect;
+    this.onEditSelect = onEditSelect;
     this.onNotify = onNotify;
+    this.isSoundEnabled = isSoundEnabled;
 
     this.unsubscribeMessages = null;
     this.unsubscribePresence = null;
     this.heartbeatTimer = null;
+    this.typingTimeout = null;
+    this.isTyping = false;
+
+    this.initialLoadDone = false;
+    this.knownMessageIds = new Set();
 
     this.lastSentAt = 0;
     this.lastSentText = "";
   }
 
-  /**
-   * Starts real-time Firestore listeners for messages and online presence.
-   */
   start() {
     this.subscribeToMessages();
     this.startPresenceTracking();
   }
 
-  /**
-   * Subscribes to the shared room's messages collection in real time.
-   */
   subscribeToMessages() {
     const messagesQuery = query(
       collection(this.db, "messages"),
@@ -209,7 +240,26 @@ export class ChatController {
     this.unsubscribeMessages = onSnapshot(
       messagesQuery,
       (snapshot) => {
-        this.renderMessages(snapshot.docs);
+        let hasNewIncoming = false;
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const msgId = change.doc.id;
+            const data = change.doc.data();
+            if (this.initialLoadDone && !this.knownMessageIds.has(msgId)) {
+              if (data.senderId !== this.currentUser.uid) {
+                hasNewIncoming = true;
+              }
+            }
+            this.knownMessageIds.add(msgId);
+          }
+        });
+
+        this.renderMessages(snapshot.docs, hasNewIncoming);
+        this.initialLoadDone = true;
+
+        if (hasNewIncoming) {
+          playIncomingAlert(this.isSoundEnabled ? this.isSoundEnabled() : true);
+        }
       },
       (error) => {
         if (error?.code === "permission-denied" && this.onPermissionRevoked) {
@@ -221,10 +271,7 @@ export class ChatController {
     );
   }
 
-  /**
-   * Renders all messages, photos, and sender-only delete buttons safely.
-   */
-  renderMessages(docs) {
+  renderMessages(docs, hasNewIncoming = false) {
     const container = this.messagesContainerEl;
     const isNearBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight < 140;
@@ -248,6 +295,7 @@ export class ChatController {
       const isOutgoing = data.senderId === this.currentUser.uid;
       const row = document.createElement("div");
       row.className = `message-row ${isOutgoing ? "outgoing" : "incoming"}`;
+      row.id = `msg-${msgId}`;
 
       const bubble = document.createElement("div");
       bubble.className = "message-bubble";
@@ -260,7 +308,37 @@ export class ChatController {
         bubble.appendChild(senderEl);
       }
 
-      // Render Photo if attached (strictly validate data:image/ prefix)
+      // 1. Render Quoted Reply Box if `data.replyTo` exists
+      if (data.replyTo && typeof data.replyTo === "object") {
+        const quoteBox = document.createElement("div");
+        quoteBox.className = "reply-quote-box";
+
+        const qSender = document.createElement("span");
+        qSender.className = "reply-quote-sender";
+        qSender.textContent = data.replyTo.senderName || "Member";
+        quoteBox.appendChild(qSender);
+
+        const qText = document.createElement("span");
+        qText.className = "reply-quote-text";
+        qText.textContent = data.replyTo.text || "Attachment";
+        quoteBox.appendChild(qText);
+
+        quoteBox.addEventListener("click", () => {
+          const targetEl = document.getElementById(`msg-${data.replyTo.id}`);
+          if (targetEl) {
+            targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
+            const targetBubble = targetEl.querySelector(".message-bubble");
+            if (targetBubble) {
+              targetBubble.classList.add("highlight-flash");
+              setTimeout(() => targetBubble.classList.remove("highlight-flash"), 1400);
+            }
+          }
+        });
+
+        bubble.appendChild(quoteBox);
+      }
+
+      // 2. Render Photo if attached
       if (
         typeof data.imageData === "string" &&
         data.imageData.startsWith("data:image/")
@@ -281,6 +359,25 @@ export class ChatController {
         bubble.appendChild(photoWrap);
       }
 
+      // 3. Render Audio / Voice Note if attached
+      if (
+        typeof data.audioData === "string" &&
+        data.audioData.startsWith("data:audio/")
+      ) {
+        const audioWrap = document.createElement("div");
+        audioWrap.className = "message-audio-wrap";
+
+        const audioEl = document.createElement("audio");
+        audioEl.className = "message-audio";
+        audioEl.controls = true;
+        audioEl.preload = "metadata";
+        audioEl.src = data.audioData;
+
+        audioWrap.appendChild(audioEl);
+        bubble.appendChild(audioWrap);
+      }
+
+      // 4. Render Text
       if (data.text) {
         const textEl = document.createElement("span");
         textEl.className = "message-text";
@@ -288,8 +385,118 @@ export class ChatController {
         bubble.appendChild(textEl);
       }
 
+      // 5. Render Emoji Reactions Badges
+      const reactionsMap =
+        data.reactions && typeof data.reactions === "object" ? data.reactions : {};
+      const countsByEmoji = {};
+      Object.entries(reactionsMap).forEach(([uid, emoji]) => {
+        if (!QUICK_REACTIONS.includes(emoji)) return;
+        if (!countsByEmoji[emoji]) countsByEmoji[emoji] = { count: 0, mine: false };
+        countsByEmoji[emoji].count += 1;
+        if (uid === this.currentUser.uid) countsByEmoji[emoji].mine = true;
+      });
+
+      const reactionEntries = Object.entries(countsByEmoji);
+      if (reactionEntries.length > 0) {
+        const badgesRow = document.createElement("div");
+        badgesRow.className = "reaction-badges-row";
+        reactionEntries.forEach(([emoji, info]) => {
+          const pill = document.createElement("button");
+          pill.type = "button";
+          pill.className = `reaction-pill ${info.mine ? "mine" : ""}`;
+          pill.textContent = `${emoji} ${info.count}`;
+          pill.addEventListener("click", () => {
+            this.toggleReaction(msgId, reactionsMap, emoji);
+          });
+          badgesRow.appendChild(pill);
+        });
+        bubble.appendChild(badgesRow);
+      }
+
+      // Quick Reaction Picker Bar (Hidden until user taps 😊+)
+      const reactMenu = document.createElement("div");
+      reactMenu.className = "quick-react-menu hidden";
+      QUICK_REACTIONS.forEach((emoji) => {
+        const rBtn = document.createElement("button");
+        rBtn.type = "button";
+        rBtn.className = "quick-react-btn";
+        rBtn.textContent = emoji;
+        rBtn.addEventListener("click", () => {
+          reactMenu.classList.add("hidden");
+          this.toggleReaction(msgId, reactionsMap, emoji);
+        });
+        reactMenu.appendChild(rBtn);
+      });
+      bubble.appendChild(reactMenu);
+
+      // 6. Metadata & Action Buttons Row (Reply, React, Edit, Delete)
       const metaEl = document.createElement("span");
       metaEl.className = "message-meta";
+
+      // Reply Button
+      const replyBtn = document.createElement("button");
+      replyBtn.type = "button";
+      replyBtn.className = "msg-action-btn";
+      replyBtn.title = "Reply to this message";
+      replyBtn.textContent = "↩️";
+      replyBtn.addEventListener("click", () => {
+        if (this.onReplySelect) {
+          const previewText =
+            data.text ||
+            (data.imageData ? "📷 Photo" : data.audioData ? "🎤 Voice Note" : "");
+          this.onReplySelect({
+            id: msgId,
+            senderName: data.senderName || "Member",
+            text: previewText.slice(0, 100)
+          });
+        }
+      });
+      metaEl.appendChild(replyBtn);
+
+      // React Button
+      const reactToggleBtn = document.createElement("button");
+      reactToggleBtn.type = "button";
+      reactToggleBtn.className = "msg-action-btn";
+      reactToggleBtn.title = "React with emoji";
+      reactToggleBtn.textContent = "😊";
+      reactToggleBtn.addEventListener("click", () => {
+        reactMenu.classList.toggle("hidden");
+      });
+      metaEl.appendChild(reactToggleBtn);
+
+      // Edit & Delete Buttons (Only for outgoing messages)
+      if (isOutgoing) {
+        if (data.text) {
+          const editBtn = document.createElement("button");
+          editBtn.type = "button";
+          editBtn.className = "msg-action-btn";
+          editBtn.title = "Edit message";
+          editBtn.textContent = "✏️";
+          editBtn.addEventListener("click", () => {
+            if (this.onEditSelect) {
+              this.onEditSelect({ id: msgId, text: data.text });
+            }
+          });
+          metaEl.appendChild(editBtn);
+        }
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "msg-action-btn";
+        delBtn.title = "Delete message for everyone";
+        delBtn.textContent = "🗑️";
+        delBtn.addEventListener("click", async () => {
+          await this.deleteMessage(msgId);
+        });
+        metaEl.appendChild(delBtn);
+      }
+
+      if (data.edited) {
+        const editedEl = document.createElement("span");
+        editedEl.className = "edited-tag";
+        editedEl.textContent = "edited";
+        metaEl.appendChild(editedEl);
+      }
 
       const timeEl = document.createElement("span");
       timeEl.textContent = formatTime(data.createdAt);
@@ -300,19 +507,6 @@ export class ChatController {
         checkEl.className = "check-icon";
         checkEl.textContent = "✓✓";
         metaEl.appendChild(checkEl);
-
-        // Delete button (only shown on user's own messages)
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "delete-msg-btn";
-        delBtn.title = "Delete message for everyone";
-        delBtn.setAttribute("aria-label", "Delete message");
-        delBtn.textContent = "🗑️";
-        delBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          await this.deleteMessage(msgId);
-        });
-        metaEl.appendChild(delBtn);
       }
 
       bubble.appendChild(metaEl);
@@ -320,9 +514,48 @@ export class ChatController {
       this.messagesListEl.appendChild(row);
     });
 
-    if (isNearBottom || docs.length <= 20) {
+    if (isNearBottom || !this.initialLoadDone) {
       container.scrollTop = container.scrollHeight;
+      if (this.scrollBottomBtnEl) this.scrollBottomBtnEl.classList.add("hidden");
+    } else if (hasNewIncoming && this.scrollBottomBtnEl) {
+      this.scrollBottomBtnEl.classList.remove("hidden");
     }
+  }
+
+  /**
+   * Toggles an emoji reaction for the current user on a message.
+   */
+  async toggleReaction(messageId, currentReactions, emoji) {
+    try {
+      const updated = { ...(currentReactions || {}) };
+      if (updated[this.currentUser.uid] === emoji) {
+        delete updated[this.currentUser.uid];
+      } else {
+        updated[this.currentUser.uid] = emoji;
+      }
+      await updateDoc(doc(this.db, "messages", messageId), {
+        reactions: updated
+      });
+    } catch (err) {
+      if (this.onNotify) this.onNotify("Could not update reaction.");
+    }
+  }
+
+  /**
+   * Edits an existing text message sent by the current user.
+   */
+  async editMessage(messageId, newRawText) {
+    const cleaned = String(newRawText || "").trim();
+    if (!cleaned) throw new Error("Edited message cannot be empty.");
+    if (cleaned.length > MAX_MESSAGE_LENGTH) {
+      throw new Error(`Message exceeds ${MAX_MESSAGE_LENGTH} characters.`);
+    }
+
+    await updateDoc(doc(this.db, "messages", messageId), {
+      text: cleaned,
+      edited: true
+    });
+    if (this.onNotify) this.onNotify("Message updated.");
   }
 
   /**
@@ -335,34 +568,34 @@ export class ChatController {
 
     try {
       await deleteDoc(doc(this.db, "messages", messageId));
-      if (this.onNotify) {
-        this.onNotify("Message deleted for everyone.");
-      }
+      if (this.onNotify) this.onNotify("Message deleted for everyone.");
     } catch (err) {
-      if (this.onNotify) {
-        this.onNotify(err?.message || "Could not delete message.");
-      }
+      if (this.onNotify) this.onNotify(err?.message || "Could not delete message.");
     }
   }
 
   /**
-   * Validates and sends a chat message (text, photo, or photo + caption) with spam protection.
+   * Validates and sends a message (text, photo, voice note, and optional replyTo).
    */
-  async sendMessage(rawText, imageData = null) {
+  async sendMessage({ rawText = "", imageData = null, audioData = null, replyTo = null }) {
     const cleaned = String(rawText || "")
       .replace(/\r\n/g, "\n")
       .trim();
 
-    if (!cleaned && !imageData) {
-      throw new Error("Please enter a message or attach a photo.");
+    if (!cleaned && !imageData && !audioData) {
+      throw new Error("Please enter a message, photo, or voice note.");
     }
 
     if (cleaned.length > MAX_MESSAGE_LENGTH) {
       throw new Error(`Message exceeds maximum limit of ${MAX_MESSAGE_LENGTH} characters.`);
     }
 
-    if (imageData && (!imageData.startsWith("data:image/") || imageData.length > MAX_IMAGE_DATA_LENGTH)) {
+    if (imageData && (!imageData.startsWith("data:image/") || imageData.length > MAX_MEDIA_DATA_LENGTH)) {
       throw new Error("Attached photo is invalid or exceeds size limit.");
+    }
+
+    if (audioData && (!audioData.startsWith("data:audio/") || audioData.length > MAX_MEDIA_DATA_LENGTH)) {
+      throw new Error("Voice note is too large. Keep recordings under 15 seconds.");
     }
 
     const now = Date.now();
@@ -373,14 +606,23 @@ export class ChatController {
       throw new Error(`Slow down! Please wait ${waitSec}s before sending another message.`);
     }
 
-    if (!imageData && cleaned === this.lastSentText && elapsed < 10000) {
+    if (!imageData && !audioData && cleaned === this.lastSentText && elapsed < 10000) {
       throw new Error("Duplicate message blocked by spam protection.");
     }
 
     this.lastSentAt = now;
     this.lastSentText = cleaned;
+    this.setTypingStatus(false);
 
-    // Atomic batch write: create message + update user's `lastMessageAt` timestamp
+    const sanitizedReply =
+      replyTo && replyTo.id
+        ? {
+            id: String(replyTo.id).slice(0, 64),
+            senderName: String(replyTo.senderName || "Member").slice(0, 30),
+            text: String(replyTo.text || "").slice(0, 120)
+          }
+        : null;
+
     const batch = writeBatch(this.db);
     const newMsgRef = doc(collection(this.db, "messages"));
     const userAuthRef = doc(this.db, "authorizedUsers", this.currentUser.uid);
@@ -388,6 +630,10 @@ export class ChatController {
     batch.set(newMsgRef, {
       text: cleaned,
       imageData: imageData || null,
+      audioData: audioData || null,
+      replyTo: sanitizedReply,
+      reactions: {},
+      edited: false,
       senderId: this.currentUser.uid,
       senderName: this.currentUser.displayName,
       createdAt: serverTimestamp()
@@ -398,13 +644,34 @@ export class ChatController {
     });
 
     await batch.commit();
-
-    // Scroll to bottom after sending
     this.messagesContainerEl.scrollTop = this.messagesContainerEl.scrollHeight;
   }
 
   /**
-   * Publishes user presence and subscribes to active online members in real time.
+   * Updates user's live typing indicator in `/presence/{uid}`.
+   */
+  setTypingStatus(typing) {
+    if (typing) {
+      if (this.typingTimeout) clearTimeout(this.typingTimeout);
+      this.typingTimeout = setTimeout(() => {
+        this.setTypingStatus(false);
+      }, 2600);
+    }
+
+    if (this.isTyping === typing) return;
+    this.isTyping = typing;
+
+    setDoc(doc(this.db, "presence", this.currentUser.uid), {
+      uid: this.currentUser.uid,
+      displayName: this.currentUser.displayName,
+      online: true,
+      typing: Boolean(typing),
+      lastSeen: serverTimestamp()
+    }).catch(() => {});
+  }
+
+  /**
+   * Publishes user presence and subscribes to active online members & typing status.
    */
   startPresenceTracking() {
     const updateMyPresence = async (onlineStatus = true) => {
@@ -413,11 +680,10 @@ export class ChatController {
           uid: this.currentUser.uid,
           displayName: this.currentUser.displayName,
           online: onlineStatus,
+          typing: Boolean(this.isTyping),
           lastSeen: serverTimestamp()
         });
-      } catch (_) {
-        // Ignore transient offline errors
-      }
+      } catch (_) {}
     };
 
     updateMyPresence(true);
@@ -436,6 +702,7 @@ export class ChatController {
       (snapshot) => {
         const now = Date.now();
         const activeUsers = [];
+        const typingUsers = [];
 
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data();
@@ -443,22 +710,39 @@ export class ChatController {
           const lastSeenMs = data.lastSeen?.toMillis ? data.lastSeen.toMillis() : now;
           if (now - lastSeenMs <= PRESENCE_STALE_MS) {
             activeUsers.push(data);
+            if (
+              data.typing &&
+              data.uid !== this.currentUser.uid &&
+              now - lastSeenMs <= TYPING_STALE_MS
+            ) {
+              typingUsers.push(data.displayName);
+            }
           }
         });
 
-        this.renderOnlineUsers(activeUsers);
+        this.renderOnlineUsers(activeUsers, typingUsers);
       },
       () => {}
     );
   }
 
-  /**
-   * Renders the online user counter and drawer chips.
-   */
-  renderOnlineUsers(users) {
+  renderOnlineUsers(users, typingUsers = []) {
     const count = Math.max(1, users.length);
     this.onlineCountEl.textContent = `${count} online`;
     this.onlineUsersListEl.innerHTML = "";
+
+    if (typingUsers.length > 0 && this.typingStatusEl) {
+      const label =
+        typingUsers.length === 1
+          ? `• ${typingUsers[0]} is typing...`
+          : `• ${typingUsers.slice(0, 2).join(", ")} typing...`;
+      this.typingStatusEl.textContent = label;
+      this.typingStatusEl.classList.remove("hidden");
+      if (this.tapViewHintEl) this.tapViewHintEl.classList.add("hidden");
+    } else if (this.typingStatusEl) {
+      this.typingStatusEl.classList.add("hidden");
+      if (this.tapViewHintEl) this.tapViewHintEl.classList.remove("hidden");
+    }
 
     const list =
       users.length > 0
@@ -482,9 +766,6 @@ export class ChatController {
     });
   }
 
-  /**
-   * Stops all listeners and timers when logging out.
-   */
   stop() {
     if (this.unsubscribeMessages) {
       this.unsubscribeMessages();
@@ -497,6 +778,10 @@ export class ChatController {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.typingTimeout) {
+      clearTimeout(this.typingTimeout);
+      this.typingTimeout = null;
     }
     if (this.visibilityHandler) {
       document.removeEventListener("visibilitychange", this.visibilityHandler);

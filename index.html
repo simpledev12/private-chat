@@ -138,12 +138,16 @@
             <button id="online-users-toggle" type="button" class="online-status-btn" aria-expanded="false">
               <span class="online-dot"></span>
               <span id="online-count-text">1 online</span>
-              <span class="tap-hint">• Tap to view</span>
+              <span id="typing-status-text" class="typing-indicator hidden"></span>
+              <span id="tap-view-hint" class="tap-hint">• Tap to view</span>
             </button>
           </div>
         </div>
 
         <div class="header-actions">
+          <button id="sound-toggle-btn" type="button" class="icon-btn" title="Toggle Notification Sound" aria-label="Toggle Notification Sound">
+            🔔
+          </button>
           <button id="theme-toggle-chat" type="button" class="icon-btn" title="Toggle Light/Dark Mode" aria-label="Toggle Light/Dark Mode">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="5"></circle>
@@ -184,10 +188,15 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>Messages &amp; photos are protected by Cloud Firestore Security Rules. Tap 🗑️ on your own message to delete it for everyone.</span>
+          <span>Protected by Cloud Firestore Rules. Reply (↩️), React (😊+), Edit (✏️), Delete (🗑️), Send Photos (📷) &amp; Voice Notes (🎤).</span>
         </div>
         <div id="messages-list" class="messages-list"></div>
       </main>
+
+      <!-- Floating Scroll-to-Bottom Button -->
+      <button id="scroll-bottom-btn" type="button" class="scroll-bottom-btn hidden" aria-label="Scroll to latest messages">
+        <span>↓ New Message</span>
+      </button>
 
       <!-- Emoji Picker Drawer -->
       <div id="emoji-picker" class="emoji-picker hidden" aria-label="Emoji Picker">
@@ -199,6 +208,15 @@
           <button type="button" class="emoji-tab" data-category="objects">🎉</button>
         </div>
         <div id="emoji-grid" class="emoji-grid"></div>
+      </div>
+
+      <!-- Reply / Edit Context Banner (Above Composer) -->
+      <div id="context-bar" class="context-bar hidden" aria-live="polite">
+        <div class="context-bar-content">
+          <span id="context-bar-label" class="context-bar-label">Replying to</span>
+          <span id="context-bar-text" class="context-bar-text"></span>
+        </div>
+        <button id="close-context-bar" type="button" class="remove-photo-btn" aria-label="Cancel reply or edit">✕</button>
       </div>
 
       <!-- Selected Photo Preview Bar (Before Sending) -->
@@ -215,6 +233,18 @@
         </button>
       </div>
 
+      <!-- Voice Note Recording Bar -->
+      <div id="voice-record-bar" class="voice-record-bar hidden" aria-live="polite">
+        <div class="voice-record-left">
+          <span class="recording-dot"></span>
+          <span id="voice-record-timer" class="voice-record-timer">Recording 0:00 / 0:15</span>
+        </div>
+        <div class="voice-record-actions">
+          <button id="cancel-voice-btn" type="button" class="voice-cancel-btn">Cancel</button>
+          <button id="send-voice-btn" type="button" class="voice-send-btn">⏹️ Send Audio</button>
+        </div>
+      </div>
+
       <!-- Chat Composer Footer -->
       <footer class="chat-composer">
         <div id="composer-toast" class="composer-toast hidden" role="status"></div>
@@ -223,13 +253,18 @@
             😊
           </button>
 
-          <!-- Hidden File Input for Photo Selection (Gallery or Camera) -->
+          <!-- Hidden File Input for Photo Selection -->
           <input id="photo-input" type="file" accept="image/*" class="hidden" />
           <button id="photo-btn" type="button" class="photo-btn" aria-label="Send Photo" title="Send Photo">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
               <circle cx="12" cy="13" r="4"></circle>
             </svg>
+          </button>
+
+          <!-- Voice Note Record Button -->
+          <button id="voice-btn" type="button" class="photo-btn" aria-label="Record Voice Note" title="Record Voice Note (up to 15s)">
+            🎤
           </button>
 
           <div class="composer-input-wrap">
@@ -237,7 +272,7 @@
               id="message-input"
               type="text"
               maxlength="500"
-              placeholder="Message or photo caption..."
+              placeholder="Message..."
               aria-label="Type a message"
             />
             <span id="char-counter" class="char-counter">0/500</span>

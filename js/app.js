@@ -49,16 +49,25 @@ const onlineUsersToggle = document.getElementById("online-users-toggle");
 const onlineDrawer = document.getElementById("online-drawer");
 const closeOnlineDrawer = document.getElementById("close-online-drawer");
 const onlineCountText = document.getElementById("online-count-text");
+const typingStatusText = document.getElementById("typing-status-text");
+const tapViewHint = document.getElementById("tap-view-hint");
 const onlineUsersList = document.getElementById("online-users-list");
+const soundToggleBtn = document.getElementById("sound-toggle-btn");
 const logoutBtn = document.getElementById("logout-btn");
 
 const messagesContainer = document.getElementById("messages-container");
 const messagesList = document.getElementById("messages-list");
+const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
 
 const emojiToggleBtn = document.getElementById("emoji-toggle-btn");
 const emojiPicker = document.getElementById("emoji-picker");
 const emojiGrid = document.getElementById("emoji-grid");
 const emojiTabs = document.querySelectorAll(".emoji-tab");
+
+const contextBar = document.getElementById("context-bar");
+const contextBarLabel = document.getElementById("context-bar-label");
+const contextBarText = document.getElementById("context-bar-text");
+const closeContextBarBtn = document.getElementById("close-context-bar");
 
 const photoBtn = document.getElementById("photo-btn");
 const photoInput = document.getElementById("photo-input");
@@ -66,6 +75,12 @@ const photoPreviewBar = document.getElementById("photo-preview-bar");
 const photoPreviewImg = document.getElementById("photo-preview-img");
 const photoPreviewSize = document.getElementById("photo-preview-size");
 const removePhotoBtn = document.getElementById("remove-photo-btn");
+
+const voiceBtn = document.getElementById("voice-btn");
+const voiceRecordBar = document.getElementById("voice-record-bar");
+const voiceRecordTimer = document.getElementById("voice-record-timer");
+const cancelVoiceBtn = document.getElementById("cancel-voice-btn");
+const sendVoiceBtn = document.getElementById("send-voice-btn");
 
 const lightboxModal = document.getElementById("lightbox-modal");
 const lightboxImg = document.getElementById("lightbox-img");
@@ -97,14 +112,25 @@ let db = null;
 let chatController = null;
 let activeUser = null;
 let pendingImageData = null;
+let activeReplyTo = null;
+let activeEditMessage = null;
+let soundEnabled = localStorage.getItem("private_chat_sound") !== "off";
 let toastTimeout = null;
 
+// Voice Recording State
+let mediaRecorder = null;
+let audioChunks = [];
+let recordInterval = null;
+let recordSeconds = 0;
+let shouldSendRecording = false;
+
 /**
- * 1. Theme Management (Light & Dark Mode)
+ * 1. Theme & Sound Management
  */
 function initTheme() {
   const savedTheme = localStorage.getItem("private_chat_theme") || "dark";
   document.documentElement.setAttribute("data-theme", savedTheme);
+  soundToggleBtn.textContent = soundEnabled ? "🔔" : "🔕";
 }
 
 function toggleTheme() {
@@ -116,6 +142,13 @@ function toggleTheme() {
 
 themeToggleLogin.addEventListener("click", toggleTheme);
 themeToggleChat.addEventListener("click", toggleTheme);
+
+soundToggleBtn.addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  localStorage.setItem("private_chat_sound", soundEnabled ? "on" : "off");
+  soundToggleBtn.textContent = soundEnabled ? "🔔" : "🔕";
+  showComposerToast(soundEnabled ? "Notification sound ON 🔔" : "Notification sound MUTED 🔕");
+});
 
 /**
  * 2. Alert & Toast Helpers
@@ -160,7 +193,6 @@ function initFirebaseClient() {
     connectionPill.classList.add("connected");
     connectionPillText.textContent = `Connected: ${cfg.projectId}`;
 
-    // Restore active session if user refreshes page
     onAuthStateChanged(auth, async (user) => {
       if (user && !activeUser) {
         const restored = await checkExistingSession(db, user);
@@ -197,7 +229,10 @@ function enterChatRoom(userProfile) {
     messagesListEl: messagesList,
     messagesContainerEl: messagesContainer,
     onlineCountEl: onlineCountText,
+    typingStatusEl: typingStatusText,
+    tapViewHintEl: tapViewHint,
     onlineUsersListEl: onlineUsersList,
+    scrollBottomBtnEl: scrollBottomBtn,
     onPermissionRevoked: async (reason) => {
       await handleLogout(reason);
     },
@@ -205,14 +240,58 @@ function enterChatRoom(userProfile) {
       lightboxImg.src = src;
       lightboxModal.classList.remove("hidden");
     },
+    onReplySelect: (replyObj) => {
+      activeEditMessage = null;
+      activeReplyTo = replyObj;
+      contextBarLabel.textContent = `Replying to ${replyObj.senderName}`;
+      contextBarText.textContent = replyObj.text || "Attachment";
+      contextBar.classList.remove("hidden");
+      messageInput.focus();
+    },
+    onEditSelect: (editObj) => {
+      activeReplyTo = null;
+      activeEditMessage = editObj;
+      contextBarLabel.textContent = "Editing your message";
+      contextBarText.textContent = editObj.text;
+      contextBar.classList.remove("hidden");
+      messageInput.value = editObj.text;
+      updateCharCounter();
+      messageInput.focus();
+    },
     onNotify: (msg) => {
       showComposerToast(msg);
-    }
+    },
+    isSoundEnabled: () => soundEnabled
   });
 
   chatController.start();
   messageInput.focus();
 }
+
+function clearContextBar() {
+  activeReplyTo = null;
+  if (activeEditMessage) {
+    activeEditMessage = null;
+    messageInput.value = "";
+    updateCharCounter();
+  }
+  contextBar.classList.add("hidden");
+}
+
+closeContextBarBtn.addEventListener("click", clearContextBar);
+
+scrollBottomBtn.addEventListener("click", () => {
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  scrollBottomBtn.classList.add("hidden");
+});
+
+messagesContainer.addEventListener("scroll", () => {
+  const isNearBottom =
+    messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 100;
+  if (isNearBottom) {
+    scrollBottomBtn.classList.add("hidden");
+  }
+});
 
 async function handleLogout(alertReason = "") {
   const uid = activeUser?.uid;
@@ -224,6 +303,8 @@ async function handleLogout(alertReason = "") {
   }
 
   clearPendingPhoto();
+  clearContextBar();
+  stopVoiceRecording(false);
   await logoutAndRevoke({ auth, db, uid });
 
   chatView.classList.remove("active");
@@ -388,7 +469,100 @@ lightboxModal.addEventListener("click", (e) => {
 });
 
 /**
- * 9. Message Composer & Character Limit
+ * 9. Voice Note Recording (Up to 15 Seconds, Spark Plan Compressed Audio)
+ */
+async function startVoiceRecording() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showComposerToast("Microphone is not supported on this browser.");
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    recordSeconds = 0;
+    shouldSendRecording = false;
+
+    const mimeTypes = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4"
+    ];
+    const supportedMime = mimeTypes.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || "";
+
+    mediaRecorder = supportedMime
+      ? new MediaRecorder(stream, { mimeType: supportedMime, audioBitsPerSecond: 16000 })
+      : new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      if (recordInterval) clearInterval(recordInterval);
+      voiceRecordBar.classList.add("hidden");
+
+      if (!shouldSendRecording || audioChunks.length === 0) return;
+
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        try {
+          const base64Audio = reader.result;
+          await chatController.sendMessage({
+            rawText: "",
+            audioData: base64Audio,
+            replyTo: activeReplyTo
+          });
+          clearContextBar();
+        } catch (err) {
+          showComposerToast(err.message || "Failed to send voice note.");
+        }
+      };
+      reader.readAsDataURL(blob);
+    };
+
+    mediaRecorder.start();
+    voiceRecordTimer.textContent = "Recording 0:00 / 0:15";
+    voiceRecordBar.classList.remove("hidden");
+
+    recordInterval = setInterval(() => {
+      recordSeconds += 1;
+      const secStr = String(recordSeconds).padStart(2, "0");
+      voiceRecordTimer.textContent = `Recording 0:${secStr} / 0:15`;
+      if (recordSeconds >= 15) {
+        stopVoiceRecording(true);
+      }
+    }, 1000);
+  } catch (err) {
+    showComposerToast("Microphone permission denied or unavailable.");
+  }
+}
+
+function stopVoiceRecording(send = false) {
+  shouldSendRecording = send;
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  } else {
+    voiceRecordBar.classList.add("hidden");
+  }
+}
+
+voiceBtn.addEventListener("click", () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    stopVoiceRecording(true);
+  } else {
+    startVoiceRecording();
+  }
+});
+
+cancelVoiceBtn.addEventListener("click", () => stopVoiceRecording(false));
+sendVoiceBtn.addEventListener("click", () => stopVoiceRecording(true));
+
+/**
+ * 10. Message Composer, Live Typing Indicator & Character Limit
  */
 function updateCharCounter() {
   const len = messageInput.value.length;
@@ -396,7 +570,12 @@ function updateCharCounter() {
   charCounter.classList.toggle("warn", len >= MAX_MESSAGE_LENGTH - 50);
 }
 
-messageInput.addEventListener("input", updateCharCounter);
+messageInput.addEventListener("input", () => {
+  updateCharCounter();
+  if (chatController && messageInput.value.trim().length > 0) {
+    chatController.setTypingStatus(true);
+  }
+});
 
 messageForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -405,16 +584,36 @@ messageForm.addEventListener("submit", async (e) => {
   const rawText = messageInput.value;
   const attachedPhoto = pendingImageData;
 
+  // Handle Edit Mode if active
+  if (activeEditMessage) {
+    const editId = activeEditMessage.id;
+    try {
+      clearContextBar();
+      messageInput.value = "";
+      updateCharCounter();
+      await chatController.editMessage(editId, rawText);
+    } catch (err) {
+      showComposerToast(err.message || "Could not edit message.");
+    }
+    return;
+  }
+
   if (!rawText.trim() && !attachedPhoto) return;
+
+  const replySnapshot = activeReplyTo;
 
   try {
     messageInput.value = "";
     updateCharCounter();
     clearPendingPhoto();
+    clearContextBar();
     emojiPicker.classList.add("hidden");
-    await chatController.sendMessage(rawText, attachedPhoto);
+    await chatController.sendMessage({
+      rawText,
+      imageData: attachedPhoto,
+      replyTo: replySnapshot
+    });
   } catch (err) {
-    // Restore text and photo if rate-limited so user doesn't lose their message
     if (!messageInput.value && rawText) {
       messageInput.value = rawText;
       updateCharCounter();
@@ -429,7 +628,7 @@ messageForm.addEventListener("submit", async (e) => {
 });
 
 /**
- * 10. Firebase Configuration Modal & SHA-256 Helper
+ * 11. Firebase Configuration Modal & SHA-256 Helper
  */
 openConfigBtn.addEventListener("click", () => {
   const existing = getFirebaseConfig();
