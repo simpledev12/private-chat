@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * PRIVATE CHAT — REAL-TIME CHAT, REPLIES, REACTIONS, VOICE NOTES, EDIT & DELETE
+ * PRIVATE CHAT — REAL-TIME CHAT, REPLIES, REACTIONS, VOICE NOTES, CLEAR ALL & DELETE
  * ============================================================================
  */
 
@@ -8,6 +8,7 @@ import {
   collection,
   doc,
   addDoc,
+  getDocs,
   query,
   orderBy,
   limitToLast,
@@ -15,6 +16,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  writeBatch,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
@@ -187,6 +189,7 @@ export class ChatController {
   }) {
     this.db = db;
     this.currentUser = currentUser;
+    this.roomId = currentUser.roomId;
     this.messagesListEl = messagesListEl;
     this.messagesContainerEl = messagesContainerEl;
     this.onlineCountEl = onlineCountEl;
@@ -209,7 +212,6 @@ export class ChatController {
 
     this.initialLoadDone = false;
     this.knownMessageIds = new Set();
-
     this.lastSentAt = 0;
   }
 
@@ -219,8 +221,9 @@ export class ChatController {
   }
 
   subscribeToMessages() {
+    // Isolated messages collection for this specific room
     const messagesQuery = query(
-      collection(this.db, "messages"),
+      collection(this.db, "rooms", this.roomId, "messages"),
       orderBy("createdAt", "asc"),
       limitToLast(150)
     );
@@ -252,7 +255,7 @@ export class ChatController {
       (error) => {
         if (error?.code === "permission-denied" && this.onPermissionRevoked) {
           this.onPermissionRevoked(
-            "Session expired or access code changed. Please sign in again."
+            "Session expired or permission denied. Please sign in again."
           );
         }
       }
@@ -513,7 +516,7 @@ export class ChatController {
       } else {
         updated[this.currentUser.uid] = emoji;
       }
-      await updateDoc(doc(this.db, "messages", messageId), {
+      await updateDoc(doc(this.db, "rooms", this.roomId, "messages", messageId), {
         reactions: updated
       });
     } catch (err) {
@@ -528,7 +531,7 @@ export class ChatController {
       throw new Error(`Message exceeds ${MAX_MESSAGE_LENGTH} characters.`);
     }
 
-    await updateDoc(doc(this.db, "messages", messageId), {
+    await updateDoc(doc(this.db, "rooms", this.roomId, "messages", messageId), {
       text: cleaned,
       edited: true
     });
@@ -541,10 +544,53 @@ export class ChatController {
     if (!confirmed) return;
 
     try {
-      await deleteDoc(doc(this.db, "messages", messageId));
+      await deleteDoc(doc(this.db, "rooms", this.roomId, "messages", messageId));
       if (this.onNotify) this.onNotify("Message deleted for everyone.");
     } catch (err) {
       if (this.onNotify) this.onNotify(err?.message || "Could not delete message.");
+    }
+  }
+
+  /**
+   * Deletes all messages in this room for everyone in one go.
+   */
+  async clearAllChat() {
+    const confirmed = window.confirm(
+      "Kya aap sach me is room ke SABHI messages ek sath delete karna chahte hain? (Yeh sabhi ke liye delete ho jayega)"
+    );
+    if (!confirmed) return;
+
+    try {
+      if (this.onNotify) this.onNotify("Deleting all messages...");
+      const snapshot = await getDocs(collection(this.db, "rooms", this.roomId, "messages"));
+      if (snapshot.empty) {
+        if (this.onNotify) this.onNotify("Room me koi message nahi hai.");
+        return;
+      }
+
+      // Batch delete in chunks of 450 (Firestore limit is 500)
+      const batches = [];
+      let currentBatch = writeBatch(this.db);
+      let count = 0;
+
+      snapshot.docs.forEach((docSnap) => {
+        currentBatch.delete(docSnap.ref);
+        count++;
+        if (count % 400 === 0) {
+          batches.push(currentBatch.commit());
+          currentBatch = writeBatch(this.db);
+        }
+      });
+
+      if (count % 400 !== 0) {
+        batches.push(currentBatch.commit());
+      }
+
+      await Promise.all(batches);
+      this.messagesListEl.innerHTML = "";
+      if (this.onNotify) this.onNotify("Poora chat ek sath delete ho gaya!");
+    } catch (err) {
+      if (this.onNotify) this.onNotify(`Delete failed: ${err.message}`);
     }
   }
 
@@ -578,8 +624,8 @@ export class ChatController {
           }
         : null;
 
-    // Send directly to messages collection
-    await addDoc(collection(this.db, "messages"), {
+    // Send directly to this room's messages collection
+    await addDoc(collection(this.db, "rooms", this.roomId, "messages"), {
       text: cleaned,
       imageData: imageData || null,
       audioData: audioData || null,
@@ -605,7 +651,7 @@ export class ChatController {
     if (this.isTyping === typing) return;
     this.isTyping = typing;
 
-    setDoc(doc(this.db, "presence", this.currentUser.uid), {
+    setDoc(doc(this.db, "rooms", this.roomId, "presence", this.currentUser.uid), {
       uid: this.currentUser.uid,
       displayName: this.currentUser.displayName,
       online: true,
@@ -617,7 +663,7 @@ export class ChatController {
   startPresenceTracking() {
     const updateMyPresence = async (onlineStatus = true) => {
       try {
-        await setDoc(doc(this.db, "presence", this.currentUser.uid), {
+        await setDoc(doc(this.db, "rooms", this.roomId, "presence", this.currentUser.uid), {
           uid: this.currentUser.uid,
           displayName: this.currentUser.displayName,
           online: onlineStatus,
@@ -637,7 +683,7 @@ export class ChatController {
     };
     document.addEventListener("visibilitychange", this.visibilityHandler);
 
-    const presenceQuery = query(collection(this.db, "presence"));
+    const presenceQuery = query(collection(this.db, "rooms", this.roomId, "presence"));
     this.unsubscribePresence = onSnapshot(
       presenceQuery,
       (snapshot) => {

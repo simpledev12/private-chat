@@ -37,6 +37,8 @@ const joinBtn = document.getElementById("join-btn");
 const joinBtnText = document.getElementById("join-btn-text");
 const loginAlert = document.getElementById("login-alert");
 
+const roomTitleText = document.getElementById("room-title-text");
+const clearAllBtn = document.getElementById("clear-all-btn");
 const onlineUsersToggle = document.getElementById("online-users-toggle");
 const onlineDrawer = document.getElementById("online-drawer");
 const closeOnlineDrawer = document.getElementById("close-online-drawer");
@@ -168,6 +170,8 @@ function enterChatRoom(userProfile) {
   activeUser = userProfile;
   hideLoginAlert();
 
+  roomTitleText.textContent = `Room: ${userProfile.roomCode}`;
+
   loginView.classList.remove("active");
   chatView.classList.add("active");
 
@@ -232,6 +236,13 @@ function clearContextBar() {
 
 closeContextBarBtn.addEventListener("click", clearContextBar);
 
+// Clear All Chat Handler
+clearAllBtn.addEventListener("click", async () => {
+  if (chatController) {
+    await chatController.clearAllChat();
+  }
+});
+
 scrollBottomBtn.addEventListener("click", () => {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
   scrollBottomBtn.classList.add("hidden");
@@ -247,6 +258,7 @@ messagesContainer.addEventListener("scroll", () => {
 
 async function handleLogout(alertReason = "") {
   const uid = activeUser?.uid;
+  const roomId = activeUser?.roomId;
   activeUser = null;
 
   if (chatController) {
@@ -257,7 +269,7 @@ async function handleLogout(alertReason = "") {
   clearPendingPhoto();
   clearContextBar();
   stopVoiceRecording(false);
-  await logoutAndRevoke({ auth, db, uid });
+  await logoutAndRevoke({ auth, db, uid, roomId });
 
   chatView.classList.remove("active");
   loginView.classList.add("active");
@@ -280,12 +292,11 @@ loginForm.addEventListener("submit", async (e) => {
   const accessCode = accessCodeInput.value;
 
   joinBtn.disabled = true;
-  joinBtnText.textContent = "Verifying...";
+  joinBtnText.textContent = "Entering Room...";
 
   try {
     const userProfile = await loginWithAccessCode({
       auth,
-      db,
       displayName,
       accessCode
     });

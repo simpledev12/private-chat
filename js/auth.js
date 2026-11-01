@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * PRIVATE CHAT — AUTHENTICATION & ACCESS CODE VERIFICATION (js/auth.js)
+ * PRIVATE CHAT — AUTHENTICATION & ROOM ID DERIVATION (js/auth.js)
  * ============================================================================
  */
 
@@ -12,10 +12,7 @@ import {
 
 import {
   doc,
-  getDoc,
-  setDoc,
-  deleteDoc,
-  serverTimestamp
+  deleteDoc
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 export async function sha256Hex(input) {
@@ -37,7 +34,10 @@ export function validateDisplayName(rawName) {
   return cleaned;
 }
 
-export async function loginWithAccessCode({ auth, db, displayName, accessCode }) {
+/**
+ * Authenticates user anonymously and derives a unique roomId from the Secret Access Code.
+ */
+export async function loginWithAccessCode({ auth, displayName, accessCode }) {
   const cleanName = validateDisplayName(displayName);
   const cleanCode = String(accessCode || "").trim();
 
@@ -45,7 +45,9 @@ export async function loginWithAccessCode({ auth, db, displayName, accessCode })
     throw new Error("Secret Access Code must be between 4 and 64 characters.");
   }
 
-  const accessHash = await sha256Hex(cleanCode);
+  // Derive unique 32-character roomId from SHA-256 hash of the entered Secret Access Code
+  const fullHash = await sha256Hex(cleanCode);
+  const roomId = `room_${fullHash.slice(0, 32)}`;
 
   let userCredential;
   try {
@@ -56,63 +58,20 @@ export async function loginWithAccessCode({ auth, db, displayName, accessCode })
 
   const user = userCredential.user;
 
-  // Auto-initialize /config/access if the database doesn't have a code set yet
-  try {
-    const configSnap = await getDoc(doc(db, "config", "access")).catch(() => null);
-    if (!configSnap || !configSnap.exists()) {
-      await setDoc(doc(db, "config", "access"), {
-        secretHash: accessHash,
-        createdAt: serverTimestamp()
-      }).catch(() => {});
-    }
-  } catch (_) {}
-
-  // Write authorization claim
-  try {
-    await setDoc(doc(db, "authorizedUsers", user.uid), {
-      uid: user.uid,
-      displayName: cleanName,
-      accessHash: accessHash,
-      authorizedAt: serverTimestamp(),
-      lastMessageAt: null
-    });
-  } catch (verifyErr) {
-    await signOut(auth).catch(() => {});
-    throw new Error("Galat Secret Access Code! Kripya sahi code daalein.");
-  }
-
-  sessionStorage.setItem("private_chat_display_name", cleanName);
-
   return {
     uid: user.uid,
-    displayName: cleanName
+    displayName: cleanName,
+    roomId: roomId,
+    roomCode: cleanCode
   };
 }
 
-export async function checkExistingSession(db, user) {
-  if (!user) return null;
-  try {
-    const snap = await getDoc(doc(db, "authorizedUsers", user.uid));
-    if (!snap.exists()) return null;
-    const data = snap.data();
-    if (!data?.displayName) return null;
-    return {
-      uid: user.uid,
-      displayName: data.displayName
-    };
-  } catch (_) {
-    return null;
-  }
-}
-
-export async function logoutAndRevoke({ auth, db, uid }) {
-  if (uid && db) {
+export async function logoutAndRevoke({ auth, db, uid, roomId }) {
+  if (uid && db && roomId) {
     await Promise.allSettled([
-      deleteDoc(doc(db, "presence", uid)),
-      deleteDoc(doc(db, "authorizedUsers", uid))
+      deleteDoc(doc(db, "rooms", roomId, "presence", uid))
     ]);
   }
-  sessionStorage.removeItem("private_chat_display_name");
   if (auth) {
     await signOut(auth);
   }

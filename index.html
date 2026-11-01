@@ -49,7 +49,7 @@
             </svg>
           </div>
           <h1>Private Chat</h1>
-          <p class="auth-subtitle">Enter your display name and the shared secret access code to join the room.</p>
+          <p class="auth-subtitle">Har Secret Access Code ka apna alag private room hoga. Sahi code daalne wale hi aapke room me aayenge.</p>
         </div>
 
         <div id="login-alert" class="alert-banner hidden" role="alert"></div>
@@ -71,21 +71,21 @@
           </div>
 
           <div class="form-group">
-            <label for="access-code-input">Secret Access Code</label>
+            <label for="access-code-input">Secret Access Code (Room Code)</label>
             <div class="input-wrapper password-wrapper">
               <input
                 id="access-code-input"
                 type="password"
                 minlength="4"
                 maxlength="64"
-                placeholder="Enter shared room access code"
+                placeholder="Enter secret room access code"
                 required
               />
               <button id="toggle-code-visibility" type="button" class="text-toggle-btn" aria-label="Show or hide access code">
                 Show
               </button>
             </div>
-            <span class="field-hint">Protected by Cloud Firestore Security Rules</span>
+            <span class="field-hint">Jo dost same access code daalenge, sirf wahi aapse baat kar payenge</span>
           </div>
 
           <button id="join-btn" type="submit" class="primary-btn">
@@ -98,7 +98,7 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>End-to-end Firestore Rules Protected Room</span>
+          <span>Isolated Private Rooms • Cloud Firestore Protected</span>
         </div>
       </div>
     </section>
@@ -120,7 +120,7 @@
           </div>
           <div class="room-info">
             <div class="room-title-row">
-              <h2>Private Chat Room</h2>
+              <h2 id="room-title-text">Private Chat Room</h2>
             </div>
             <button id="online-users-toggle" type="button" class="online-status-btn" aria-expanded="false">
               <span class="online-dot"></span>
@@ -132,6 +132,10 @@
         </div>
 
         <div class="header-actions">
+          <!-- Clear All Chat Button -->
+          <button id="clear-all-btn" type="button" class="clear-chat-btn" title="Clear all messages in this room" aria-label="Clear all messages">
+            🧹 Clear Chat
+          </button>
           <button id="sound-toggle-btn" type="button" class="icon-btn" title="Toggle Notification Sound" aria-label="Toggle Notification Sound">
             🔔
           </button>
@@ -175,7 +179,7 @@
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span>Protected by Cloud Firestore Rules. Reply (↩️), React (😊), Edit (✏️), Delete (🗑️), Send Photos (📷) &amp; Voice Notes (🎤).</span>
+          <span>Yeh ek private isolated room hai. Sirf same Secret Access Code wale members hi is room ke messages dekh sakte hain. "Clear Chat" se room ke sabhi messages ek sath delete ho jayenge.</span>
         </div>
         <div id="messages-list" class="messages-list"></div>
       </main>

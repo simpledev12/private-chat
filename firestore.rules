@@ -2,7 +2,7 @@ rules_version = '2';
 
 /**
  * ============================================================================
- * PRIVATE CHAT — CLOUD FIRESTORE SECURITY RULES (firestore.rules)
+ * PRIVATE CHAT — ISOLATED ROOMS & BULK DELETE SECURITY RULES (firestore.rules)
  * ============================================================================
  */
 
@@ -35,54 +35,46 @@ service cloud.firestore {
         );
     }
 
-    // 1. Backend Secret Config (/config/access)
-    match /config/access {
-      allow read, update, delete: if false;
-      allow create: if isSignedIn();
-    }
+    // Isolated Rooms: /rooms/{roomId}/...
+    match /rooms/{roomId} {
 
-    // 2. Per-User Session Authorization (/authorizedUsers/{userId})
-    match /authorizedUsers/{userId} {
-      allow get: if isSignedIn() && request.auth.uid == userId;
-      allow list: if false;
-      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
-    }
+      // Messages inside specific room
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
 
-    // 3. Real-Time Chat Messages, Photos, Voice Notes, Replies, Edits & Reactions
-    match /messages/{messageId} {
-      allow read: if isSignedIn();
-
-      allow create: if isSignedIn()
-        && request.resource.data.senderId == request.auth.uid
-        && isValidDisplayName(request.resource.data.senderName)
-        && request.resource.data.text is string
-        && request.resource.data.text.size() <= 500
-        && isValidImagePayload(request.resource.data.get('imageData', null))
-        && isValidAudioPayload(request.resource.data.get('audioData', null))
-        && (
-          request.resource.data.text.size() >= 1
-          || request.resource.data.get('imageData', null) != null
-          || request.resource.data.get('audioData', null) != null
-        )
-        && request.resource.data.createdAt == request.time;
-
-      allow update: if isSignedIn()
-        && request.resource.data.senderId == resource.data.senderId
-        && (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
-          || (
-            resource.data.senderId == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'edited'])
+        allow create: if isSignedIn()
+          && request.resource.data.senderId == request.auth.uid
+          && isValidDisplayName(request.resource.data.senderName)
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 500
+          && isValidImagePayload(request.resource.data.get('imageData', null))
+          && isValidAudioPayload(request.resource.data.get('audioData', null))
+          && (
+            request.resource.data.text.size() >= 1
+            || request.resource.data.get('imageData', null) != null
+            || request.resource.data.get('audioData', null) != null
           )
-        );
+          && request.resource.data.createdAt == request.time;
 
-      allow delete: if isSignedIn() && resource.data.senderId == request.auth.uid;
-    }
+        allow update: if isSignedIn()
+          && request.resource.data.senderId == resource.data.senderId
+          && (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            || (
+              resource.data.senderId == request.auth.uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'edited'])
+            )
+          );
 
-    // 4. Online Users Presence & Live Typing Status (/presence/{userId})
-    match /presence/{userId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+        // Allows single delete by sender OR bulk clear-all by room members
+        allow delete: if isSignedIn();
+      }
+
+      // Online Presence inside specific room
+      match /presence/{userId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+      }
     }
 
     match /{document=**} {

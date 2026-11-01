@@ -1,6 +1,6 @@
 /* ==========================================================================
    PRIVATE CHAT — MODERN WHATSAPP-INSPIRED MOBILE-FIRST STYLESHEET
-   Supports Light & Dark Mode, Photos, Voice Notes, Replies, Reactions, Edit & Delete
+   Supports Light & Dark Mode, Photos, Voice Notes, Clear All Chat, & Actions
    ========================================================================== */
 
 :root,
@@ -274,28 +274,6 @@ body {
   margin-top: 5px;
 }
 
-.checkbox-group {
-  margin-top: 4px;
-  margin-bottom: 18px;
-}
-
-.checkbox-label {
-  display: flex !important;
-  align-items: flex-start;
-  gap: 9px;
-  font-size: 12.5px !important;
-  font-weight: 500 !important;
-  color: var(--text-secondary) !important;
-  cursor: pointer;
-}
-
-.checkbox-label input {
-  margin-top: 2px;
-  accent-color: var(--accent);
-  width: 16px;
-  height: 16px;
-}
-
 .primary-btn {
   width: 100%;
   padding: 13px 18px;
@@ -320,17 +298,6 @@ body {
 .primary-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.secondary-btn {
-  padding: 11px 14px;
-  font-size: 13.5px;
-  font-weight: 600;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  background-color: var(--bg-input);
-  color: var(--text-primary);
-  cursor: pointer;
 }
 
 .security-footer {
@@ -384,12 +351,13 @@ body {
 }
 
 .room-info h2 {
-  font-size: 16px;
+  font-size: 15.5px;
   font-weight: 600;
   color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 170px;
 }
 
 .online-status-btn {
@@ -431,12 +399,32 @@ body {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+}
+
+.clear-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(241, 92, 109, 0.35);
+  background: rgba(241, 92, 109, 0.16);
+  color: #ffadb6;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.clear-chat-btn:hover,
+.clear-chat-btn:active {
+  background: rgba(241, 92, 109, 0.28);
 }
 
 .icon-btn {
-  width: 35px;
-  height: 35px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   border: none;
   background: rgba(255, 255, 255, 0.08);
@@ -457,12 +445,12 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 7px 11px;
+  padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -629,7 +617,7 @@ body {
   margin-bottom: 3px;
 }
 
-/* Quoted Reply Block inside Bubble */
+/* Quoted Reply Block */
 .reply-quote-box {
   background: rgba(0, 0, 0, 0.2);
   border-left: 3px solid var(--accent);
@@ -683,7 +671,7 @@ body {
   opacity: 0.85;
 }
 
-/* Audio / Voice Note Player */
+/* Audio Player */
 .message-audio-wrap {
   margin: 4px 0;
 }
@@ -701,7 +689,7 @@ body {
   white-space: pre-wrap;
 }
 
-/* Emoji Reaction Bar & Pills */
+/* Reactions */
 .reaction-badges-row {
   display: flex;
   flex-wrap: wrap;
@@ -752,7 +740,7 @@ body {
   transform: scale(1.25);
 }
 
-/* Message Footer Metadata & Action Icons */
+/* Message Meta & Actions */
 .message-meta {
   display: flex;
   align-items: center;
@@ -799,7 +787,7 @@ body {
   background-color: rgba(255, 255, 255, 0.12);
 }
 
-/* Floating Scroll to Bottom Button */
+/* Floating Scroll to Bottom */
 .scroll-bottom-btn {
   position: absolute;
   bottom: 72px;
@@ -817,7 +805,7 @@ body {
 }
 
 /* ==========================================================================
-   CONTEXT BAR (REPLY / EDIT), PHOTO PREVIEW, & VOICE RECORD BAR
+   CONTEXT BAR, PHOTO PREVIEW & VOICE RECORD BAR
    ========================================================================== */
 
 .context-bar {
@@ -906,7 +894,6 @@ body {
   flex-shrink: 0;
 }
 
-/* Voice Recording Bar */
 .voice-record-bar {
   display: flex;
   align-items: center;
@@ -1156,113 +1143,4 @@ body {
 
 .send-btn:active {
   transform: scale(0.94);
-}
-
-/* ==========================================================================
-   MODAL (FIREBASE SETUP & SHA-256 GENERATOR)
-   ========================================================================== */
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.68);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14px;
-  z-index: 100;
-}
-
-.modal-card {
-  width: 100%;
-  max-width: 460px;
-  max-height: 90dvh;
-  overflow-y: auto;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 18px;
-  padding: 18px;
-  box-shadow: var(--shadow-lg);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.modal-header h3 {
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.modal-desc {
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
-}
-
-.modal-label {
-  display: block;
-  font-size: 12.5px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-#firebase-config-textarea {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  background-color: var(--bg-input);
-  color: var(--text-primary);
-  font-family: monospace;
-  font-size: 12.5px;
-  resize: vertical;
-  margin-bottom: 12px;
-}
-
-.modal-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.hash-helper-box {
-  padding-top: 14px;
-  border-top: 1px solid var(--border-color);
-}
-
-.hash-helper-box h4 {
-  font-size: 13.5px;
-  margin-bottom: 6px;
-}
-
-.hash-input-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.hash-input-row input {
-  flex: 1;
-  padding: 9px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  background-color: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.hash-output {
-  display: block;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background-color: var(--bg-input);
-  font-size: 11px;
-  word-break: break-all;
-  color: var(--accent);
 }
